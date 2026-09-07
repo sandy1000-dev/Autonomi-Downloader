@@ -1,0 +1,133 @@
+# Ruby Quickstart
+
+A comprehensive guide to using the Autonomi network with the Ruby SDK.
+
+## Setup
+
+```bash
+# Install the gem
+gem install antd
+
+# Or add to your Gemfile
+# gem 'antd'
+
+# Start local testnet
+ant dev start
+```
+
+## Connecting
+
+```ruby
+require 'antd'
+
+# REST transport (default)
+client = Antd::Client.new
+
+# Custom endpoint
+client = Antd::Client.new(transport: :rest, base_url: "http://localhost:8082")
+
+# gRPC transport
+client = Antd::Client.new(transport: :grpc, target: "localhost:50051")
+```
+
+## Health Check
+
+```ruby
+status = client.health
+puts "Healthy: #{status.ok}"
+puts "Network: #{status.network}"  # "local", "default", or "alpha"
+```
+
+## Public Data
+
+Store and retrieve arbitrary bytes on the network.
+
+```ruby
+# Store
+result = client.data_put_public("Hello, Autonomi!")
+puts "Address: #{result.address}"
+puts "Cost: #{result.cost} atto tokens"
+
+# Retrieve
+data = client.data_get_public(result.address)
+puts data  # "Hello, Autonomi!"
+
+# Cost estimation — returns UploadCostEstimate with size, chunks, gas, payment mode
+est = client.data_cost("some data")
+puts "Estimate: #{est.file_size} bytes in #{est.chunk_count} chunks, #{est.cost} atto, gas #{est.estimated_gas_cost_wei} wei, mode #{est.payment_mode}"
+```
+
+## Private Data
+
+Encrypted data -- only accessible with the data map.
+
+```ruby
+# Store (self-encrypting)
+result = client.data_put_private("secret message")
+data_map = result.address  # Keep this secret!
+
+# Retrieve (decrypt)
+data = client.data_get_private(data_map)
+puts data
+```
+
+## Files
+
+```ruby
+# Upload a file
+result = client.file_upload_public("/path/to/file.txt")
+puts "File address: #{result.address}"
+
+# Download a file
+client.file_download_public(result.address, "/path/to/output.txt")
+
+# Cost estimation — returns UploadCostEstimate with size, chunks, gas, payment mode
+est = client.file_cost("/path/to/file.txt")
+```
+
+
+## Error Handling
+
+The Ruby SDK raises exceptions on errors.
+
+```ruby
+begin
+  client.data_get_public("nonexistent")
+rescue Antd::NotFoundError
+  puts "Not found"
+rescue Antd::PaymentError
+  puts "Payment issue"
+rescue Antd::NetworkError
+  puts "Network unreachable"
+rescue Antd::AntdError => e
+  puts "Error (#{e.status_code}): #{e.message}"
+end
+```
+
+Exception hierarchy:
+
+| Exception | HTTP Code | When |
+|-----------|-----------|------|
+| `Antd::BadRequestError` | 400 | Invalid parameters |
+| `Antd::PaymentError` | 402 | Insufficient funds |
+| `Antd::NotFoundError` | 404 | Resource not found |
+| `Antd::AlreadyExistsError` | 409 | Duplicate creation |
+| `Antd::ForkError` | 409 | Version conflict |
+| `Antd::TooLargeError` | 413 | Payload too large |
+| `Antd::InternalError` | 500 | Server error |
+| `Antd::NetworkError` | 502 | Network unreachable |
+
+## Examples
+
+```bash
+# Run individual examples
+ant dev example connect -l ruby
+ant dev example data -l ruby
+ant dev example all -l ruby
+
+# Or directly
+ruby antd-ruby/examples/01_connect.rb
+ruby antd-ruby/examples/02_data.rb
+```
+
+See `antd-ruby/examples/` for the complete set of examples.

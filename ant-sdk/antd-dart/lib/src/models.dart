@@ -1,0 +1,686 @@
+/// Payment mode for upload operations.
+///
+/// Controls how on-chain payments for stored chunks are bundled. [auto] is
+/// the recommended default — the daemon picks [merkle] for large uploads
+/// and [single] for small ones based on chunk count. Library consumers
+/// only need to override when they specifically want one transaction shape.
+enum PaymentMode {
+  /// Let the daemon pick — merkle batch for large uploads, single for small.
+  auto('auto'),
+
+  /// One on-chain transaction with a merkle proof covering all chunks.
+  /// Requires ≥2 chunks.
+  merkle('merkle'),
+
+  /// N transactions, one per chunk. Works for any chunk count, including 1.
+  single('single');
+
+  /// The wire representation sent to the daemon (`auto`, `merkle`, `single`).
+  final String wire;
+
+  const PaymentMode(this.wire);
+}
+
+/// HealthStatus is the result of a health check.
+///
+/// The diagnostic fields ([version], [evmNetwork], [uptimeSeconds],
+/// [buildCommit], [paymentTokenAddress], [paymentVaultAddress]) were added in
+/// antd 0.4.0. They default to '' / 0 so the class stays usable when talking
+/// to a pre-0.4.0 daemon that doesn't report them.
+class HealthStatus {
+  /// Whether the daemon is healthy.
+  final bool ok;
+
+  /// The network the daemon is connected to.
+  final String network;
+
+  /// antd crate version, e.g. "0.4.0". Empty when talking to a pre-0.4.0 daemon.
+  final String version;
+
+  /// EVM preset name: "arbitrum-one", "arbitrum-sepolia", "local", "custom".
+  final String evmNetwork;
+
+  /// Seconds since the daemon process started.
+  final int uptimeSeconds;
+
+  /// Short git SHA captured at build time, "" if unknown.
+  final String buildCommit;
+
+  /// Payment token contract address, "" if unconfigured.
+  final String paymentTokenAddress;
+
+  /// Payment vault contract address, "" if unconfigured.
+  final String paymentVaultAddress;
+
+  const HealthStatus({
+    required this.ok,
+    required this.network,
+    this.version = '',
+    this.evmNetwork = '',
+    this.uptimeSeconds = 0,
+    this.buildCommit = '',
+    this.paymentTokenAddress = '',
+    this.paymentVaultAddress = '',
+  });
+
+  factory HealthStatus.fromJson(Map<String, dynamic> json) {
+    return HealthStatus(
+      ok: json['status'] == 'ok',
+      network: json['network'] as String? ?? '',
+      version: json['version'] as String? ?? '',
+      evmNetwork: json['evm_network'] as String? ?? '',
+      uptimeSeconds: (json['uptime_seconds'] as num?)?.toInt() ?? 0,
+      buildCommit: json['build_commit'] as String? ?? '',
+      paymentTokenAddress: json['payment_token_address'] as String? ?? '',
+      paymentVaultAddress: json['payment_vault_address'] as String? ?? '',
+    );
+  }
+
+  @override
+  String toString() => 'HealthStatus(ok: $ok, network: $network, '
+      'version: $version, evmNetwork: $evmNetwork, '
+      'uptimeSeconds: $uptimeSeconds, buildCommit: $buildCommit)';
+}
+
+/// Result of a single-chunk put ([AntdClient.chunkPut]).
+class PutResult {
+  /// Cost in atto tokens as a string.
+  final String cost;
+
+  /// The hex address of the stored chunk.
+  final String address;
+
+  const PutResult({required this.cost, required this.address});
+
+  factory PutResult.fromJson(Map<String, dynamic> json) {
+    return PutResult(
+      cost: json['cost'] as String? ?? '',
+      address: json['address'] as String? ?? '',
+    );
+  }
+
+  @override
+  String toString() => 'PutResult(cost: $cost, address: $address)';
+}
+
+/// Result of a private data put ([AntdClient.dataPut]).
+///
+/// The DataMap is returned to the caller; it is NOT stored on-network — the
+/// caller keeps it as the only retrieval handle.
+class DataPutResult {
+  /// Hex-encoded DataMap. Hand this back to [AntdClient.dataGet] to retrieve.
+  final String dataMap;
+
+  /// Number of chunks stored on the network.
+  final int chunksStored;
+
+  /// Payment mode actually used by the daemon: `auto`, `merkle`, or `single`.
+  final String paymentModeUsed;
+
+  const DataPutResult({
+    required this.dataMap,
+    this.chunksStored = 0,
+    this.paymentModeUsed = '',
+  });
+
+  factory DataPutResult.fromJson(Map<String, dynamic> json) {
+    return DataPutResult(
+      dataMap: json['data_map'] as String? ?? '',
+      chunksStored: (json['chunks_stored'] as num?)?.toInt() ?? 0,
+      paymentModeUsed: json['payment_mode_used'] as String? ?? '',
+    );
+  }
+
+  @override
+  String toString() =>
+      'DataPutResult(dataMap: $dataMap, chunksStored: $chunksStored, paymentModeUsed: $paymentModeUsed)';
+}
+
+/// Result of a public data put ([AntdClient.dataPutPublic]).
+///
+/// The DataMap is stored on-network as an additional chunk; [address] is the
+/// shareable retrieval handle.
+class DataPutPublicResult {
+  /// Hex address of the on-network DataMap chunk. Shareable.
+  final String address;
+
+  /// Number of chunks stored on the network.
+  final int chunksStored;
+
+  /// Payment mode actually used by the daemon: `auto`, `merkle`, or `single`.
+  final String paymentModeUsed;
+
+  const DataPutPublicResult({
+    required this.address,
+    this.chunksStored = 0,
+    this.paymentModeUsed = '',
+  });
+
+  factory DataPutPublicResult.fromJson(Map<String, dynamic> json) {
+    return DataPutPublicResult(
+      address: json['address'] as String? ?? '',
+      chunksStored: (json['chunks_stored'] as num?)?.toInt() ?? 0,
+      paymentModeUsed: json['payment_mode_used'] as String? ?? '',
+    );
+  }
+
+  @override
+  String toString() =>
+      'DataPutPublicResult(address: $address, chunksStored: $chunksStored, paymentModeUsed: $paymentModeUsed)';
+}
+
+/// Result of a private file upload ([AntdClient.filePut]).
+///
+/// The DataMap is returned to the caller; it is NOT stored on-network.
+class FilePutResult {
+  /// Hex-encoded msgpack-serialized DataMap.
+  final String dataMap;
+
+  /// Total storage cost in atto, "0" if all chunks already existed.
+  final String storageCostAtto;
+
+  /// Total gas cost in wei as a decimal string.
+  final String gasCostWei;
+
+  /// Number of chunks stored on the network.
+  final int chunksStored;
+
+  /// Which payment mode was actually used: `auto`, `merkle`, or `single`.
+  final String paymentModeUsed;
+
+  const FilePutResult({
+    required this.dataMap,
+    required this.storageCostAtto,
+    required this.gasCostWei,
+    required this.chunksStored,
+    required this.paymentModeUsed,
+  });
+
+  factory FilePutResult.fromJson(Map<String, dynamic> json) {
+    return FilePutResult(
+      dataMap: json['data_map'] as String? ?? '',
+      storageCostAtto: json['storage_cost_atto'] as String? ?? '',
+      gasCostWei: json['gas_cost_wei'] as String? ?? '',
+      chunksStored: (json['chunks_stored'] as num?)?.toInt() ?? 0,
+      paymentModeUsed: json['payment_mode_used'] as String? ?? '',
+    );
+  }
+
+  @override
+  String toString() =>
+      'FilePutResult(dataMap: $dataMap, storageCostAtto: $storageCostAtto, gasCostWei: $gasCostWei, chunksStored: $chunksStored, paymentModeUsed: $paymentModeUsed)';
+}
+
+/// Result of a public file upload ([AntdClient.filePutPublic]).
+///
+/// The DataMap is stored on-network as an additional chunk; [address] is the
+/// shareable retrieval handle.
+class FilePutPublicResult {
+  /// Hex network address of the stored DataMap.
+  final String address;
+
+  /// Total storage cost in atto, "0" if all chunks already existed.
+  final String storageCostAtto;
+
+  /// Total gas cost in wei as a decimal string.
+  final String gasCostWei;
+
+  /// Number of chunks stored on the network.
+  final int chunksStored;
+
+  /// Which payment mode was actually used: `auto`, `merkle`, or `single`.
+  final String paymentModeUsed;
+
+  const FilePutPublicResult({
+    required this.address,
+    required this.storageCostAtto,
+    required this.gasCostWei,
+    required this.chunksStored,
+    required this.paymentModeUsed,
+  });
+
+  factory FilePutPublicResult.fromJson(Map<String, dynamic> json) {
+    return FilePutPublicResult(
+      address: json['address'] as String? ?? '',
+      storageCostAtto: json['storage_cost_atto'] as String? ?? '',
+      gasCostWei: json['gas_cost_wei'] as String? ?? '',
+      chunksStored: (json['chunks_stored'] as num?)?.toInt() ?? 0,
+      paymentModeUsed: json['payment_mode_used'] as String? ?? '',
+    );
+  }
+
+  @override
+  String toString() =>
+      'FilePutPublicResult(address: $address, storageCostAtto: $storageCostAtto, gasCostWei: $gasCostWei, chunksStored: $chunksStored, paymentModeUsed: $paymentModeUsed)';
+}
+
+/// WalletAddress is the wallet address response.
+class WalletAddress {
+  /// The 0x-prefixed hex address.
+  final String address;
+
+  const WalletAddress({required this.address});
+
+  factory WalletAddress.fromJson(Map<String, dynamic> json) {
+    return WalletAddress(
+      address: json['address'] as String? ?? '',
+    );
+  }
+
+  @override
+  String toString() => 'WalletAddress(address: $address)';
+}
+
+/// WalletBalance is the wallet balance response.
+class WalletBalance {
+  /// Token balance in atto tokens as a string.
+  final String balance;
+
+  /// Gas balance in atto tokens as a string.
+  final String gasBalance;
+
+  const WalletBalance({required this.balance, required this.gasBalance});
+
+  factory WalletBalance.fromJson(Map<String, dynamic> json) {
+    return WalletBalance(
+      balance: json['balance'] as String? ?? '',
+      gasBalance: json['gas_balance'] as String? ?? '',
+    );
+  }
+
+  @override
+  String toString() =>
+      'WalletBalance(balance: $balance, gasBalance: $gasBalance)';
+}
+
+/// A single payment required for an upload.
+class PaymentInfo {
+  final String quoteHash;
+  final String rewardsAddress;
+  final String amount;
+
+  const PaymentInfo({
+    required this.quoteHash,
+    required this.rewardsAddress,
+    required this.amount,
+  });
+
+  factory PaymentInfo.fromJson(Map<String, dynamic> json) {
+    return PaymentInfo(
+      quoteHash: json['quote_hash'] as String? ?? '',
+      rewardsAddress: json['rewards_address'] as String? ?? '',
+      amount: json['amount'] as String? ?? '',
+    );
+  }
+
+  @override
+  String toString() =>
+      'PaymentInfo(quoteHash: $quoteHash, rewardsAddress: $rewardsAddress, amount: $amount)';
+}
+
+/// A candidate node entry within a merkle pool commitment.
+class CandidateNodeEntry {
+  /// The 0x-prefixed hex rewards address.
+  final String rewardsAddress;
+
+  /// Node price as a decimal string (atto tokens).
+  final String amount;
+
+  const CandidateNodeEntry({
+    required this.rewardsAddress,
+    required this.amount,
+  });
+
+  factory CandidateNodeEntry.fromJson(Map<String, dynamic> json) {
+    return CandidateNodeEntry(
+      rewardsAddress: json['rewards_address'] as String? ?? '',
+      amount: json['amount'] as String? ?? '',
+    );
+  }
+
+  @override
+  String toString() =>
+      'CandidateNodeEntry(rewardsAddress: $rewardsAddress, amount: $amount)';
+}
+
+/// A pool commitment containing candidate nodes for merkle batch payments.
+class PoolCommitmentEntry {
+  /// The 0x-prefixed hex pool hash (32 bytes).
+  final String poolHash;
+
+  /// Candidate nodes in this pool (exactly 16).
+  final List<CandidateNodeEntry> candidates;
+
+  const PoolCommitmentEntry({
+    required this.poolHash,
+    required this.candidates,
+  });
+
+  factory PoolCommitmentEntry.fromJson(Map<String, dynamic> json) {
+    return PoolCommitmentEntry(
+      poolHash: json['pool_hash'] as String? ?? '',
+      candidates: (json['candidates'] as List<dynamic>?)
+              ?.map(
+                  (e) => CandidateNodeEntry.fromJson(e as Map<String, dynamic>))
+              .toList() ??
+          [],
+    );
+  }
+
+  @override
+  String toString() =>
+      'PoolCommitmentEntry(poolHash: $poolHash, candidates: $candidates)';
+}
+
+/// Result of preparing an upload for external signing.
+/// [paymentType] is "wave_batch" or "merkle" -- determines which fields are
+/// populated and which contract call the external signer must make.
+class PrepareUploadResult {
+  final String uploadId;
+  final List<PaymentInfo> payments;
+  final String totalAmount;
+  final String paymentVaultAddress;
+  final String paymentTokenAddress;
+  final String rpcUrl;
+
+  /// "wave_batch" or "merkle".
+  final String paymentType;
+
+  /// Merkle tree depth (1-8). Present only when [paymentType] == "merkle".
+  final int? depth;
+
+  /// Pool commitments for payForMerkleTree(). Present only when [paymentType] == "merkle".
+  final List<PoolCommitmentEntry>? poolCommitments;
+
+  /// Unix-seconds timestamp for the merkle payment. Present only when [paymentType] == "merkle".
+  final int? merklePaymentTimestamp;
+
+  /// Total chunks in this upload, including any already on-network. Added in
+  /// antd 0.10.0; 0 against older daemons. The external signer pays for
+  /// ([totalChunks] - [alreadyStoredCount]) chunks.
+  final int totalChunks;
+
+  /// Chunks already stored on-network and excluded from payment + PUT (added in antd 0.10.0).
+  final int alreadyStoredCount;
+
+  const PrepareUploadResult({
+    required this.uploadId,
+    required this.payments,
+    required this.totalAmount,
+    required this.paymentVaultAddress,
+    required this.paymentTokenAddress,
+    required this.rpcUrl,
+    this.paymentType = 'wave_batch',
+    this.depth,
+    this.poolCommitments,
+    this.merklePaymentTimestamp,
+    this.totalChunks = 0,
+    this.alreadyStoredCount = 0,
+  });
+
+  factory PrepareUploadResult.fromJson(Map<String, dynamic> json) {
+    return PrepareUploadResult(
+      uploadId: json['upload_id'] as String? ?? '',
+      payments: (json['payments'] as List<dynamic>?)
+              ?.map((e) => PaymentInfo.fromJson(e as Map<String, dynamic>))
+              .toList() ??
+          [],
+      totalAmount: json['total_amount'] as String? ?? '',
+      paymentVaultAddress: json['payment_vault_address'] as String? ?? '',
+      paymentTokenAddress: json['payment_token_address'] as String? ?? '',
+      rpcUrl: json['rpc_url'] as String? ?? '',
+      paymentType: json['payment_type'] as String? ?? 'wave_batch',
+      depth: (json['depth'] as num?)?.toInt(),
+      poolCommitments: (json['pool_commitments'] as List<dynamic>?)
+          ?.map(
+              (e) => PoolCommitmentEntry.fromJson(e as Map<String, dynamic>))
+          .toList(),
+      merklePaymentTimestamp:
+          (json['merkle_payment_timestamp'] as num?)?.toInt(),
+      totalChunks: (json['total_chunks'] as num?)?.toInt() ?? 0,
+      alreadyStoredCount: (json['already_stored_count'] as num?)?.toInt() ?? 0,
+    );
+  }
+
+  @override
+  String toString() =>
+      'PrepareUploadResult(uploadId: $uploadId, paymentType: $paymentType, totalAmount: $totalAmount)';
+}
+
+/// Result of finalizing an externally-signed upload.
+class FinalizeUploadResult {
+  /// Legacy: hex address set when `store_data_map=true` was passed (paid by
+  /// the daemon wallet). Empty when not requested.
+  final String address;
+
+  /// Number of chunks stored on the network.
+  final int chunksStored;
+
+  /// Hex-encoded msgpack DataMap (always returned by antd >= 0.6.1).
+  final String dataMap;
+
+  /// Hex network address of the DataMap chunk — populated when prepare was
+  /// called with `visibility="public"` (the DataMap was bundled into the same
+  /// external-signer payment batch). Empty for private uploads.
+  final String dataMapAddress;
+
+  const FinalizeUploadResult({
+    required this.address,
+    required this.chunksStored,
+    this.dataMap = '',
+    this.dataMapAddress = '',
+  });
+
+  factory FinalizeUploadResult.fromJson(Map<String, dynamic> json) {
+    return FinalizeUploadResult(
+      address: json['address'] as String? ?? '',
+      chunksStored: (json['chunks_stored'] as num?)?.toInt() ?? 0,
+      dataMap: json['data_map'] as String? ?? '',
+      dataMapAddress: json['data_map_address'] as String? ?? '',
+    );
+  }
+
+  @override
+  String toString() =>
+      'FinalizeUploadResult(address: $address, chunksStored: $chunksStored, dataMap: $dataMap, dataMapAddress: $dataMapAddress)';
+}
+
+/// Result of preparing a single-chunk external-signer publish via
+/// `POST /v1/chunks/prepare`.
+///
+/// When [alreadyStored] is true the chunk is already on-network — only
+/// [address] is meaningful and no finalize call is needed. Otherwise the
+/// wave-batch payment fields describe what the external signer must submit
+/// before calling `finalizeChunkUpload`.
+class PrepareChunkResult {
+  /// Content-addressed BLAKE3 of the chunk bytes (hex, 64 chars). Always set.
+  final String address;
+
+  /// True if the chunk is already stored on the network and no payment is
+  /// needed.
+  final bool alreadyStored;
+
+  /// Opaque identifier to pass back to `finalizeChunkUpload`. Empty when
+  /// [alreadyStored] is true.
+  final String uploadId;
+
+  /// Always "wave_batch" for single-chunk publishes.
+  final String paymentType;
+
+  /// Per-quote payment entries for `payForQuotes()`. Empty when
+  /// [alreadyStored] is true.
+  final List<PaymentInfo> payments;
+
+  /// Total amount to pay (atto tokens, decimal string).
+  final String totalAmount;
+
+  /// Payment vault contract address.
+  final String paymentVaultAddress;
+
+  /// Payment token contract address.
+  final String paymentTokenAddress;
+
+  /// EVM RPC URL for submitting transactions.
+  final String rpcUrl;
+
+  const PrepareChunkResult({
+    required this.address,
+    this.alreadyStored = false,
+    this.uploadId = '',
+    this.paymentType = '',
+    this.payments = const [],
+    this.totalAmount = '',
+    this.paymentVaultAddress = '',
+    this.paymentTokenAddress = '',
+    this.rpcUrl = '',
+  });
+
+  factory PrepareChunkResult.fromJson(Map<String, dynamic> json) {
+    return PrepareChunkResult(
+      address: json['address'] as String? ?? '',
+      alreadyStored: json['already_stored'] as bool? ?? false,
+      uploadId: json['upload_id'] as String? ?? '',
+      paymentType: json['payment_type'] as String? ?? '',
+      payments: (json['payments'] as List<dynamic>?)
+              ?.map((e) => PaymentInfo.fromJson(e as Map<String, dynamic>))
+              .toList() ??
+          const [],
+      totalAmount: json['total_amount'] as String? ?? '',
+      paymentVaultAddress: json['payment_vault_address'] as String? ?? '',
+      paymentTokenAddress: json['payment_token_address'] as String? ?? '',
+      rpcUrl: json['rpc_url'] as String? ?? '',
+    );
+  }
+
+  @override
+  String toString() =>
+      'PrepareChunkResult(address: $address, alreadyStored: $alreadyStored, uploadId: $uploadId, paymentType: $paymentType, totalAmount: $totalAmount)';
+}
+
+/// Pre-upload cost breakdown returned by [AntdClient.dataCost] and
+/// [AntdClient.fileCost].
+///
+/// The server samples up to 5 chunk addresses and extrapolates the storage
+/// cost. Gas is an advisory heuristic, not a live gas-oracle query.
+class UploadCostEstimate {
+  /// Storage cost in atto tokens as a string.
+  final String cost;
+
+  /// Original file size in bytes.
+  final int fileSize;
+
+  /// Number of data chunks the file would split into.
+  final int chunkCount;
+
+  /// Advisory gas cost heuristic in wei as a string.
+  final String estimatedGasCostWei;
+
+  /// Payment mode: "auto", "merkle", or "single".
+  final String paymentMode;
+
+  const UploadCostEstimate({
+    required this.cost,
+    required this.fileSize,
+    required this.chunkCount,
+    required this.estimatedGasCostWei,
+    required this.paymentMode,
+  });
+
+  factory UploadCostEstimate.fromJson(Map<String, dynamic> json) {
+    return UploadCostEstimate(
+      cost: json['cost'] as String? ?? '',
+      fileSize: (json['file_size'] as num?)?.toInt() ?? 0,
+      chunkCount: (json['chunk_count'] as num?)?.toInt() ?? 0,
+      estimatedGasCostWei: json['estimated_gas_cost_wei'] as String? ?? '',
+      paymentMode: json['payment_mode'] as String? ?? '',
+    );
+  }
+
+  @override
+  String toString() =>
+      'UploadCostEstimate(cost: $cost, fileSize: $fileSize, chunkCount: $chunkCount, estimatedGasCostWei: $estimatedGasCostWei, paymentMode: $paymentMode)';
+}
+
+/// A fetch-progress update emitted during a streaming download when progress is
+/// requested. Counts are in *chunks*, not bytes — the byte denominator is the
+/// download's total size (the `x-content-length` header over gRPC, the leading
+/// NDJSON `meta` frame over REST). [total] is 0 while still unknown (mid
+/// DataMap-resolution).
+///
+/// [phase] is one of:
+///   * `"resolving_map"` — walking the hierarchical DataMap to learn the count
+///   * `"resolved"` — DataMap resolved, [total] now holds the real chunk count
+///   * `"fetching"` — fetching data chunks; [fetched]/[total] advance the bar
+class DownloadProgress {
+  /// One of `"resolving_map"`, `"resolved"`, `"fetching"`.
+  final String phase;
+
+  /// Chunks fetched so far in the current phase.
+  final int fetched;
+
+  /// Total chunks for the current phase, or 0 if not yet known.
+  final int total;
+
+  const DownloadProgress({
+    required this.phase,
+    required this.fetched,
+    required this.total,
+  });
+
+  @override
+  String toString() =>
+      'DownloadProgress(phase: $phase, fetched: $fetched, total: $total)';
+}
+
+/// One frame of a progress-enabled streaming download: the total size, a
+/// plaintext data chunk, or a [DownloadProgress] update. At most one of [meta]
+/// / [data] / [progress] is set. Yielded by the `*WithProgress` streaming
+/// methods; the plain `dataStream` / `dataStreamPublic` methods stay a pure
+/// byte stream for callers that don't need progress.
+class DownloadFrame {
+  /// Plaintext bytes for a data frame, `null` otherwise.
+  final List<int>? data;
+
+  /// The progress update for a progress frame, `null` otherwise.
+  final DownloadProgress? progress;
+
+  /// Total download size in *bytes* — the progress *denominator* — for a meta
+  /// frame, `null` otherwise.
+  ///
+  /// Surfaced from the gRPC `x-content-length` response metadata or the REST
+  /// NDJSON `meta` frame. Emitted at most once, before any data, when the
+  /// daemon reports it. Pair it with the byte count of the [data] frames (or
+  /// with [DownloadProgress] chunk counts) to render a byte-accurate progress
+  /// bar.
+  final int? totalBytes;
+
+  /// Constructs a data frame carrying plaintext [bytes].
+  const DownloadFrame.data(List<int> bytes)
+      : data = bytes,
+        progress = null,
+        totalBytes = null;
+
+  /// Constructs a progress frame carrying a [DownloadProgress] update.
+  const DownloadFrame.progress(DownloadProgress this.progress)
+      : data = null,
+        totalBytes = null;
+
+  /// Constructs a meta frame carrying the total download size in [bytes].
+  const DownloadFrame.meta(int bytes)
+      : totalBytes = bytes,
+        data = null,
+        progress = null;
+
+  /// True if this frame carries a progress update rather than data bytes.
+  bool get isProgress => progress != null;
+
+  /// True if this frame carries the total-size denominator (in bytes).
+  bool get isMeta => totalBytes != null;
+
+  @override
+  String toString() {
+    if (isMeta) return 'DownloadFrame.meta($totalBytes bytes)';
+    if (isProgress) return 'DownloadFrame.progress($progress)';
+    return 'DownloadFrame.data(${data!.length} bytes)';
+  }
+}

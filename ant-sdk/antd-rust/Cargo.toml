@@ -1,0 +1,58 @@
+[package]
+name = "antd-client"
+version = "0.1.0"
+edition = "2021"
+description = "Rust REST client SDK for the antd daemon — the gateway to the Autonomi decentralized network"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/WithAutonomi/ant-sdk"
+
+[dependencies]
+reqwest = { version = "0.12", features = ["json", "stream"] }
+bytes = "1"
+futures-core = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+# tokio-stream's StreamExt::map adapts the tonic server-stream into the
+# public Stream<Bytes> surface for data_stream/data_stream_public.
+tokio-stream = "0.1"
+tonic = "0.12"
+prost = "0.13"
+
+[build-dependencies]
+tonic-build = "0.12"
+
+[dev-dependencies]
+mockito = "1"
+alloy = { version = "1", features = ["full"] }
+hex = "0.4"
+
+[[example]]
+name = "01-connect"
+path = "examples/01-connect.rs"
+
+[[example]]
+name = "02-data"
+path = "examples/02-data.rs"
+
+[[example]]
+name = "03-chunks"
+path = "examples/03-chunks.rs"
+
+[[example]]
+name = "04-files"
+path = "examples/04-files.rs"
+
+[[example]]
+name = "06-private-data"
+path = "examples/06-private-data.rs"
+
+[[example]]
+name = "07-external-signer"
+path = "examples/07-external-signer.rs"
+
+[[example]]
+name = "08-grpc"
+path = "examples/08-grpc.rs"

@@ -1,0 +1,182 @@
+# antd-lua
+
+Lua SDK for the [antd](../antd/) daemon — the gateway to the Autonomi decentralized network.
+
+## Installation
+
+```bash
+luarocks install antd
+```
+
+Or from source:
+
+```bash
+cd antd-lua
+luarocks make
+```
+
+### Dependencies
+
+- Lua >= 5.1 (LuaJIT compatible)
+- [luasocket](https://luarocks.org/modules/lunarmodules/luasocket) >= 3.0
+- [lua-cjson](https://luarocks.org/modules/openresty/lua-cjson) >= 2.1
+
+### Platform Notes
+
+**Windows:** `luasocket` requires a C compiler that can link against the Lua shared library. If you are using **mingw-w64** with LuaJIT, `luarocks install luasocket` may fail with linker errors (`undefined reference to _initialize_onexit_table`). Known workarounds:
+
+1. **Use MSVC** — Install Visual Studio Build Tools and configure LuaRocks to use `cl.exe`:
+   ```
+   luarocks config variables.CC cl
+   luarocks config variables.LD link
+   luarocks install luasocket
+   ```
+
+2. **Use a prebuilt Lua distribution** — [LuaBinaries](https://luabinaries.sourceforge.net/) or [OpenResty](https://openresty.org/) ship with prebuilt luasocket.
+
+3. **Use WSL/Linux** — luasocket builds without issues on Linux and macOS.
+
+`lua-cjson` typically builds fine on all platforms.
+
+## Quick Start
+
+```lua
+local antd = require("antd")
+
+-- Create a client (default: http://localhost:8082)
+local client = antd.new_client()
+
+-- Check daemon health
+local health, err = client:health()
+if err then
+    print("Error: " .. err.message)
+    os.exit(1)
+end
+print("OK: " .. tostring(health.ok) .. ", Network: " .. health.network)
+
+-- Store data
+local result, err = client:data_put_public("Hello, Autonomi!")
+if err then
+    print("Error: " .. err.message)
+    os.exit(1)
+end
+print("Stored at " .. result.address .. " (chunks: " .. result.chunks_stored .. ")")
+
+-- Retrieve data
+local data, err = client:data_get_public(result.address)
+if err then
+    print("Error: " .. err.message)
+    os.exit(1)
+end
+print("Retrieved: " .. data)
+```
+
+## Prerequisites
+
+The antd daemon must be running. Start it with:
+
+```bash
+ant dev start
+```
+
+## Configuration
+
+```lua
+local antd = require("antd")
+
+-- Default: http://localhost:8082, 300 second timeout
+local client = antd.new_client()
+
+-- Custom URL
+local client = antd.new_client("http://custom-host:9090")
+
+-- Custom timeout (in seconds)
+local client = antd.new_client(antd.DEFAULT_BASE_URL, { timeout = 30 })
+```
+
+## API Reference
+
+All methods return `value, err` following Lua convention. On success `err` is `nil`. On failure the first return is `nil` and `err` is an error table.
+
+### Health
+
+| Method | Description |
+|--------|-------------|
+| `client:health()` | Check daemon status |
+
+### Data (Immutable)
+
+| Method | Description |
+|--------|-------------|
+| `client:data_put_public(data, payment_mode)` | Store public data — returns a `DataPutPublicResult` table (DataMap stored on-network) |
+| `client:data_get_public(address)` | Retrieve public data by address |
+| `client:data_put(data, payment_mode)` | Store encrypted private data — returns a `DataPutResult` table (DataMap returned to caller) |
+| `client:data_get(data_map)` | Retrieve private data using a caller-held DataMap |
+| `client:data_cost(data, payment_mode)` | Estimate storage cost — returns a table with `cost`, `file_size`, `chunk_count`, `estimated_gas_cost_wei`, `payment_mode` |
+
+### Chunks
+
+| Method | Description |
+|--------|-------------|
+| `client:chunk_put(data)` | Store a raw chunk |
+| `client:chunk_get(address)` | Retrieve a chunk |
+
+### Files
+
+| Method | Description |
+|--------|-------------|
+| `client:file_put(path, payment_mode)` | Upload a file privately — returns a `FilePutResult` table (DataMap returned to caller) |
+| `client:file_get(data_map, dest_path)` | Download a private file using a caller-held DataMap |
+| `client:file_put_public(path, payment_mode)` | Upload a file publicly — returns a `FilePutPublicResult` table (DataMap stored on-network) |
+| `client:file_get_public(address, dest_path)` | Download a public file by address |
+| `client:file_cost(path, is_public, payment_mode)` | Estimate upload cost — returns a table with `cost`, `file_size`, `chunk_count`, `estimated_gas_cost_wei`, `payment_mode` |
+
+## Error Handling
+
+All methods return `nil, err` on failure. Errors are tables with `type`, `status_code`, and `message` fields:
+
+```lua
+local errors = require("antd.errors")
+
+local data, err = client:data_get_public(address)
+if err then
+    if errors.is_antd_error(err) then
+        if err.type == "not_found" then
+            print("Data not found on network")
+        elseif err.type == "payment" then
+            print("Insufficient funds")
+        end
+    end
+    print("Error " .. err.status_code .. ": " .. err.message)
+end
+```
+
+| Error Type | HTTP Status | When |
+|-----------|-------------|------|
+| `bad_request` | 400 | Invalid parameters |
+| `payment` | 402 | Insufficient funds |
+| `not_found` | 404 | Resource not found |
+| `already_exists` | 409 | Resource exists |
+| `fork` | 409 | Version conflict |
+| `too_large` | 413 | Payload too large |
+| `internal` | 500 | Server error |
+| `network` | 502 | Network unreachable |
+
+## Examples
+
+See the [examples/](examples/) directory:
+
+- `01-connect` — Health check
+- `02-data` — Public data storage and retrieval
+- `03-chunks` — Raw chunk operations
+- `04-files` — File and directory upload/download
+- `06-private-data` — Private encrypted data storage
+
+## Testing
+
+Tests use the [busted](https://github.com/lunarmodules/busted) framework:
+
+```bash
+luarocks install busted
+busted spec/
+```

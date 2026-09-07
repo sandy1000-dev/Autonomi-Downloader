@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package antd.v1;
+
+option csharp_namespace = "Antd.V1";
+option go_package = "github.com/WithAutonomi/ant-sdk/antd-go/proto/antd/v1;v1";
+
+message Cost {
+  string atto_tokens = 1;             // storage cost in atto tokens as string
+  uint64 file_size = 2;               // original file size in bytes
+  uint32 chunk_count = 3;             // number of data chunks the file splits into
+  string estimated_gas_cost_wei = 4;  // gas heuristic as string (can exceed JS safe int)
+  string payment_mode = 5;            // "auto" | "merkle" | "single"
+}
+
+message Address {
+  string hex = 1;
+}
+
+message PublicKeyProto {
+  string hex = 1;
+}
+
+message SecretKeyProto {
+  string hex = 1;
+}
+
+// External-signer per-quote payment entry. Shared by `UploadService` (file +
+// data prepare, wave-batch path) and `ChunkService.PrepareChunk`.
+message PaymentEntry {
+  // Quote hash (hex with 0x prefix, 32 bytes).
+  string quote_hash = 1;
+  // Rewards address (hex with 0x prefix, 20 bytes).
+  string rewards_address = 2;
+  // Amount to pay (atto tokens as decimal string).
+  string amount = 3;
+}

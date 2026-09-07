@@ -1,0 +1,977 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:antd/antd.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+import 'package:test/test.dart';
+
+/// Last captured request body, populated by [mockDaemon] for any POST path.
+/// Tests inspect this to assert that fields like `payment_mode` reach the wire.
+Map<String, Map<String, dynamic>?> lastRequestBodies = {};
+
+void _captureBody(http.Request request) {
+  if (request.body.isEmpty) {
+    lastRequestBodies[request.url.path] = null;
+    return;
+  }
+  try {
+    lastRequestBodies[request.url.path] =
+        jsonDecode(request.body) as Map<String, dynamic>;
+  } catch (_) {
+    lastRequestBodies[request.url.path] = null;
+  }
+}
+
+/// Creates a MockClient that mimics antd REST responses.
+MockClient mockDaemon() {
+  return MockClient((request) async {
+    _captureBody(request);
+    final method = request.method;
+    final path = request.url.path;
+
+    Map<String, dynamic>? body;
+    int statusCode = 200;
+
+    switch ('$method $path') {
+      // Health
+      case 'GET /health':
+        body = {
+          'status': 'ok',
+          'network': 'local',
+          'version': '0.4.0',
+          'evm_network': 'local',
+          'uptime_seconds': 42,
+          'build_commit': 'abcdef123456',
+          'payment_token_address': '0xtoken',
+          'payment_vault_address': '0xvault',
+        };
+        break;
+
+      // Data
+      case 'POST /v1/data/public':
+        body = {
+          'address': 'abc123',
+          'chunks_stored': 3,
+          'payment_mode_used': 'single',
+        };
+        break;
+      case 'GET /v1/data/public/abc123':
+        body = {'data': base64.encode(utf8.encode('hello'))};
+        break;
+      case 'POST /v1/data':
+        body = {
+          'data_map': 'dm123',
+          'chunks_stored': 5,
+          'payment_mode_used': 'merkle',
+        };
+        break;
+      case 'POST /v1/data/get':
+        body = {'data': base64.encode(utf8.encode('secret'))};
+        break;
+      case 'POST /v1/data/cost':
+        body = {
+          'cost': '50',
+          'file_size': 4,
+          'chunk_count': 3,
+          'estimated_gas_cost_wei': '150000000000000',
+          'payment_mode': 'single',
+        };
+        break;
+
+      // Chunks
+      case 'POST /v1/chunks':
+        body = {'cost': '10', 'address': 'chunk1'};
+        break;
+      case 'GET /v1/chunks/chunk1':
+        body = {'data': base64.encode(utf8.encode('chunkdata'))};
+        break;
+
+      // Files
+      case 'POST /v1/files':
+        body = {
+          'data_map': 'private_dm',
+          'storage_cost_atto': '500',
+          'gas_cost_wei': '21',
+          'chunks_stored': 2,
+          'payment_mode_used': 'single',
+        };
+        break;
+      case 'POST /v1/files/get':
+        return http.Response('{}', 200);
+      case 'POST /v1/files/public':
+        body = {
+          'address': 'file1',
+          'storage_cost_atto': '1000',
+          'gas_cost_wei': '42',
+          'chunks_stored': 3,
+          'payment_mode_used': 'auto',
+        };
+        break;
+      case 'POST /v1/files/public/get':
+        return http.Response('{}', 200);
+      case 'POST /v1/files/cost':
+        body = {
+          'cost': '1000',
+          'file_size': 4096,
+          'chunk_count': 3,
+          'estimated_gas_cost_wei': '150000000000000',
+          'payment_mode': 'auto',
+        };
+        break;
+
+      // 404 for anything else
+      default:
+        statusCode = 404;
+        body = {'error': 'not found'};
+    }
+
+    return http.Response(
+      body != null ? jsonEncode(body) : '',
+      statusCode,
+      headers: {'content-type': 'application/json'},
+    );
+  });
+}
+
+/// Creates a MockClient that always returns the given status code and error.
+MockClient errorDaemon(int statusCode, String errorMessage) {
+  return MockClient((request) async {
+    return http.Response(
+      jsonEncode({'error': errorMessage}),
+      statusCode,
+      headers: {'content-type': 'application/json'},
+    );
+  });
+}
+
+void main() {
+  setUp(() {
+    lastRequestBodies = {};
+  });
+
+  group('PaymentMode enum', () {
+    test('wire values match daemon strings', () {
+      expect(PaymentMode.auto.wire, equals('auto'));
+      expect(PaymentMode.merkle.wire, equals('merkle'));
+      expect(PaymentMode.single.wire, equals('single'));
+    });
+  });
+
+  group('Health', () {
+    test('returns health status with all diagnostic fields', () async {
+      final client = AntdClient(httpClient: mockDaemon());
+      final health = await client.health();
+      expect(health.ok, isTrue);
+      expect(health.network, equals('local'));
+      expect(health.version, equals('0.4.0'));
+      expect(health.evmNetwork, equals('local'));
+      expect(health.uptimeSeconds, equals(42));
+      expect(health.buildCommit, equals('abcdef123456'));
+      expect(health.paymentTokenAddress, equals('0xtoken'));
+      expect(health.paymentVaultAddress, equals('0xvault'));
+      client.close();
+    });
+
+    test('HealthStatus.fromJson defaults diagnostics for pre-0.4.0 daemon', () {
+      final h = HealthStatus.fromJson({'status': 'ok', 'network': 'default'});
+      expect(h.ok, isTrue);
+      expect(h.network, equals('default'));
+      expect(h.version, equals(''));
+      expect(h.evmNetwork, equals(''));
+      expect(h.uptimeSeconds, equals(0));
+      expect(h.buildCommit, equals(''));
+    });
+  });
+
+  group('Data Public', () {
+    test('put and get public data', () async {
+      final client = AntdClient(httpClient: mockDaemon());
+
+      final put = await client.dataPutPublic(
+        Uint8List.fromList(utf8.encode('hello')),
+        paymentMode: PaymentMode.single,
+      );
+      expect(put.address, equals('abc123'));
+      expect(put.chunksStored, equals(3));
+      expect(put.paymentModeUsed, equals('single'));
+
+      // payment_mode wires through.
+      expect(lastRequestBodies['/v1/data/public'], isNotNull);
+      expect(
+        lastRequestBodies['/v1/data/public']!['payment_mode'],
+        equals('single'),
+      );
+
+      final data = await client.dataGetPublic('abc123');
+      expect(utf8.decode(data), equals('hello'));
+
+      client.close();
+    });
+  });
+
+  group('Data Private', () {
+    test('put and get private data (POST /v1/data + /v1/data/get)', () async {
+      final client = AntdClient(httpClient: mockDaemon());
+
+      final put = await client.dataPut(
+        Uint8List.fromList(utf8.encode('secret')),
+        paymentMode: PaymentMode.merkle,
+      );
+      expect(put.dataMap, equals('dm123'));
+      expect(put.chunksStored, equals(5));
+      expect(put.paymentModeUsed, equals('merkle'));
+
+      // payment_mode wires through.
+      expect(
+        lastRequestBodies['/v1/data']!['payment_mode'],
+        equals('merkle'),
+      );
+
+      final data = await client.dataGet(put.dataMap);
+      expect(utf8.decode(data), equals('secret'));
+
+      // dataGet forwards data_map in the JSON body.
+      expect(
+        lastRequestBodies['/v1/data/get']!['data_map'],
+        equals('dm123'),
+      );
+
+      client.close();
+    });
+
+    test('dataPut defaults to PaymentMode.auto', () async {
+      final client = AntdClient(httpClient: mockDaemon());
+      await client.dataPut(Uint8List.fromList(utf8.encode('x')));
+      expect(
+        lastRequestBodies['/v1/data']!['payment_mode'],
+        equals('auto'),
+      );
+      client.close();
+    });
+  });
+
+  group('Data Cost', () {
+    test('returns full breakdown and forwards payment_mode', () async {
+      final client = AntdClient(httpClient: mockDaemon());
+      final est = await client.dataCost(
+        Uint8List.fromList(utf8.encode('test')),
+        paymentMode: PaymentMode.single,
+      );
+      expect(est.cost, equals('50'));
+      expect(est.fileSize, equals(4));
+      expect(est.chunkCount, equals(3));
+      expect(est.estimatedGasCostWei, equals('150000000000000'));
+      expect(est.paymentMode, equals('single'));
+
+      expect(
+        lastRequestBodies['/v1/data/cost']!['payment_mode'],
+        equals('single'),
+      );
+
+      client.close();
+    });
+  });
+
+  group('Chunks', () {
+    test('put and get chunks', () async {
+      final client = AntdClient(httpClient: mockDaemon());
+
+      final put = await client.chunkPut(Uint8List.fromList(utf8.encode('chunkdata')));
+      expect(put.address, equals('chunk1'));
+
+      final data = await client.chunkGet('chunk1');
+      expect(utf8.decode(data), equals('chunkdata'));
+
+      client.close();
+    });
+  });
+
+  group('Files Public', () {
+    test('put and get public files', () async {
+      final client = AntdClient(httpClient: mockDaemon());
+
+      final put = await client.filePutPublic(
+        '/tmp/test.txt',
+        paymentMode: PaymentMode.auto,
+      );
+      expect(put.address, equals('file1'));
+      expect(put.storageCostAtto, equals('1000'));
+      expect(put.gasCostWei, equals('42'));
+      expect(put.chunksStored, equals(3));
+      expect(put.paymentModeUsed, equals('auto'));
+
+      expect(
+        lastRequestBodies['/v1/files/public']!['payment_mode'],
+        equals('auto'),
+      );
+
+      await client.fileGetPublic('file1', '/tmp/out.txt');
+      expect(
+        lastRequestBodies['/v1/files/public/get']!['address'],
+        equals('file1'),
+      );
+      expect(
+        lastRequestBodies['/v1/files/public/get']!['dest_path'],
+        equals('/tmp/out.txt'),
+      );
+
+      client.close();
+    });
+
+    test('fileCost returns full breakdown and forwards payment_mode', () async {
+      final client = AntdClient(httpClient: mockDaemon());
+      final est = await client.fileCost(
+        '/tmp/test.txt',
+        isPublic: true,
+        paymentMode: PaymentMode.merkle,
+      );
+      expect(est.cost, equals('1000'));
+      expect(est.fileSize, equals(4096));
+      expect(est.chunkCount, equals(3));
+      expect(est.estimatedGasCostWei, equals('150000000000000'));
+      expect(est.paymentMode, equals('auto'));
+
+      expect(
+        lastRequestBodies['/v1/files/cost']!['payment_mode'],
+        equals('merkle'),
+      );
+      expect(
+        lastRequestBodies['/v1/files/cost']!['is_public'],
+        equals(true),
+      );
+
+      client.close();
+    });
+  });
+
+  group('Files Private', () {
+    test('put and get private files (POST /v1/files + /v1/files/get)',
+        () async {
+      final client = AntdClient(httpClient: mockDaemon());
+
+      final put = await client.filePut(
+        '/tmp/test.txt',
+        paymentMode: PaymentMode.single,
+      );
+      expect(put.dataMap, equals('private_dm'));
+      expect(put.storageCostAtto, equals('500'));
+      expect(put.gasCostWei, equals('21'));
+      expect(put.chunksStored, equals(2));
+      expect(put.paymentModeUsed, equals('single'));
+
+      expect(
+        lastRequestBodies['/v1/files']!['payment_mode'],
+        equals('single'),
+      );
+
+      await client.fileGet(put.dataMap, '/tmp/out.txt');
+      expect(
+        lastRequestBodies['/v1/files/get']!['data_map'],
+        equals('private_dm'),
+      );
+      expect(
+        lastRequestBodies['/v1/files/get']!['dest_path'],
+        equals('/tmp/out.txt'),
+      );
+
+      client.close();
+    });
+  });
+
+  group('Error Mapping', () {
+    test('maps 404 to NotFoundError', () async {
+      final client = AntdClient(httpClient: errorDaemon(404, 'not found'));
+      expect(
+        () => client.health(),
+        throwsA(isA<NotFoundError>().having((e) => e.statusCode, 'statusCode', 404)),
+      );
+      client.close();
+    });
+
+    test('maps 400 to BadRequestError', () async {
+      final client = AntdClient(httpClient: errorDaemon(400, 'bad request'));
+      expect(
+        () => client.health(),
+        throwsA(isA<BadRequestError>()),
+      );
+      client.close();
+    });
+
+    test('maps 402 to PaymentError', () async {
+      final client = AntdClient(httpClient: errorDaemon(402, 'insufficient funds'));
+      expect(
+        () => client.health(),
+        throwsA(isA<PaymentError>()),
+      );
+      client.close();
+    });
+
+    test('maps 409 to AlreadyExistsError', () async {
+      final client = AntdClient(httpClient: errorDaemon(409, 'already exists'));
+      expect(
+        () => client.health(),
+        throwsA(isA<AlreadyExistsError>()),
+      );
+      client.close();
+    });
+
+    test('maps 413 to TooLargeError', () async {
+      final client = AntdClient(httpClient: errorDaemon(413, 'too large'));
+      expect(
+        () => client.health(),
+        throwsA(isA<TooLargeError>()),
+      );
+      client.close();
+    });
+
+    test('maps 500 to InternalError', () async {
+      final client = AntdClient(httpClient: errorDaemon(500, 'server error'));
+      expect(
+        () => client.health(),
+        throwsA(isA<InternalError>()),
+      );
+      client.close();
+    });
+
+    test('maps 502 to NetworkError', () async {
+      final client = AntdClient(httpClient: errorDaemon(502, 'network error'));
+      expect(
+        () => client.health(),
+        throwsA(isA<NetworkError>()),
+      );
+      client.close();
+    });
+
+    test('maps unknown status to AntdError', () async {
+      final client = AntdClient(httpClient: errorDaemon(503, 'unavailable'));
+      expect(
+        () => client.health(),
+        throwsA(isA<AntdError>().having((e) => e.statusCode, 'statusCode', 503)),
+      );
+      client.close();
+    });
+  });
+
+  group('Data Stream (V2-289 Phase 1)', () {
+    test('dataStream streams private bytes and forwards data_map', () async {
+      final harness = await _StreamMockServer.start();
+      addTearDown(harness.stop);
+
+      final client = AntdClient(baseUrl: harness.baseUrl);
+      addTearDown(client.close);
+
+      final stream = await client.dataStream('dm-stream');
+      final bytes = await _collect(stream);
+      expect(utf8.decode(bytes), equals('streamed-secret'));
+
+      // data_map forwarded in the JSON body of POST /v1/data/stream.
+      expect(harness.lastStreamBody, isNotNull);
+      expect(harness.lastStreamBody!['data_map'], equals('dm-stream'));
+    });
+
+    test('dataStreamPublic streams public bytes by address', () async {
+      final harness = await _StreamMockServer.start();
+      addTearDown(harness.stop);
+
+      final client = AntdClient(baseUrl: harness.baseUrl);
+      addTearDown(client.close);
+
+      final stream = await client.dataStreamPublic('pub-addr');
+      final bytes = await _collect(stream);
+      expect(utf8.decode(bytes), equals('streamed-public'));
+
+      // The address lands in the path, hitting the …/stream route.
+      expect(harness.lastPublicStreamPath,
+          equals('/v1/data/public/pub-addr/stream'));
+    });
+
+    test('dataStream maps non-2xx {"error"} body to AntdError', () async {
+      final harness = await _StreamMockServer.start();
+      addTearDown(harness.stop);
+      harness.failNext = true;
+
+      final client = AntdClient(baseUrl: harness.baseUrl);
+      addTearDown(client.close);
+
+      expect(
+        () => client.dataStream('dm-stream'),
+        throwsA(isA<NotFoundError>()
+            .having((e) => e.message, 'message', equals('no such data map'))),
+      );
+    });
+
+    test('dataStreamPublic maps non-2xx {"error"} body to AntdError', () async {
+      final harness = await _StreamMockServer.start();
+      addTearDown(harness.stop);
+      harness.failNext = true;
+
+      final client = AntdClient(baseUrl: harness.baseUrl);
+      addTearDown(client.close);
+
+      expect(
+        () => client.dataStreamPublic('pub-addr'),
+        throwsA(isA<NotFoundError>()),
+      );
+    });
+  });
+
+  group('Data Stream with progress (V2-512 NDJSON)', () {
+    test('dataStreamWithProgress opts into NDJSON and yields progress + data',
+        () async {
+      final harness = await _StreamMockServer.start();
+      addTearDown(harness.stop);
+
+      final client = AntdClient(baseUrl: harness.baseUrl);
+      addTearDown(client.close);
+
+      final stream = await client.dataStreamWithProgress('dm-stream');
+      final frames = await stream.toList();
+
+      // Opt-in: the request advertised the NDJSON media type.
+      expect(harness.lastAcceptHeader, equals('application/x-ndjson'));
+      // data_map forwarded in the JSON body.
+      expect(harness.lastStreamBody!['data_map'], equals('dm-stream'));
+
+      // meta (byte total) is surfaced first, then the progress and data frames.
+      expect(frames, hasLength(3));
+      expect(frames[0].isMeta, isTrue);
+      expect(frames[0].totalBytes, equals('streamed-secret'.length));
+
+      expect(frames[1].isProgress, isTrue);
+      expect(frames[1].progress!.phase, equals('fetching'));
+      expect(frames[1].progress!.fetched, equals(1));
+      expect(frames[1].progress!.total, equals(1));
+
+      expect(frames[2].isProgress, isFalse);
+      expect(frames[2].isMeta, isFalse);
+      expect(utf8.decode(frames[2].data!), equals('streamed-secret'));
+    });
+
+    test('dataStreamPublicWithProgress opts into NDJSON by address', () async {
+      final harness = await _StreamMockServer.start();
+      addTearDown(harness.stop);
+
+      final client = AntdClient(baseUrl: harness.baseUrl);
+      addTearDown(client.close);
+
+      final stream = await client.dataStreamPublicWithProgress('pub-addr');
+      final frames = await stream.toList();
+
+      expect(harness.lastAcceptHeader, equals('application/x-ndjson'));
+      expect(harness.lastPublicStreamPath,
+          equals('/v1/data/public/pub-addr/stream'));
+
+      expect(frames[0].isMeta, isTrue);
+      expect(frames[0].totalBytes, equals('streamed-public'.length));
+      expect(frames[1].isProgress, isTrue);
+      expect(utf8.decode(frames[2].data!), equals('streamed-public'));
+    });
+
+    test('a terminal NDJSON error frame surfaces as an AntdError', () async {
+      final harness = await _StreamMockServer.start();
+      addTearDown(harness.stop);
+      harness.ndjsonError = true;
+
+      final client = AntdClient(baseUrl: harness.baseUrl);
+      addTearDown(client.close);
+
+      final stream = await client.dataStreamWithProgress('dm-stream');
+      // The leading progress frame is fine; draining hits the error frame.
+      expect(
+        () => stream.toList(),
+        throwsA(isA<InternalError>()
+            .having((e) => e.message, 'message', equals('decrypt failed'))),
+      );
+    });
+  });
+
+  group('Public Prepare (V2-249 PR4)', () {
+    test('prepareUploadPublic forwards visibility=public on the wire', () async {
+      final harness = await _ExternalSignerMockServer.start();
+      addTearDown(harness.stop);
+
+      final client = AntdClient(baseUrl: harness.baseUrl);
+      addTearDown(client.close);
+
+      final res = await client.prepareUploadPublic('/tmp/test.txt');
+      expect(res.uploadId, equals('up-pub-1'));
+      // already-stored preflight (added in antd 0.10.0)
+      expect(res.totalChunks, equals(3));
+      expect(res.alreadyStoredCount, equals(1));
+
+      // Body captured by the mock server must include visibility="public".
+      expect(harness.lastPrepareBody, isNotNull);
+      expect(harness.lastPrepareBody!['visibility'], equals('public'));
+      expect(harness.lastPrepareBody!['path'], equals('/tmp/test.txt'));
+    });
+
+    test('prepareUpload forwards explicit visibility argument', () async {
+      final harness = await _ExternalSignerMockServer.start();
+      addTearDown(harness.stop);
+
+      final client = AntdClient(baseUrl: harness.baseUrl);
+      addTearDown(client.close);
+
+      await client.prepareUpload('/tmp/test.txt', visibility: 'private');
+      expect(harness.lastPrepareBody!['visibility'], equals('private'));
+    });
+
+    test('prepareUpload without visibility omits the JSON field', () async {
+      final harness = await _ExternalSignerMockServer.start();
+      addTearDown(harness.stop);
+
+      final client = AntdClient(baseUrl: harness.baseUrl);
+      addTearDown(client.close);
+
+      await client.prepareUpload('/tmp/test.txt');
+      // No visibility key on the wire — preserves the pre-public daemon shape.
+      expect(harness.lastPrepareBody!.containsKey('visibility'), isFalse);
+    });
+
+    test('FinalizeUploadResult surfaces data_map and data_map_address', () async {
+      final harness = await _ExternalSignerMockServer.start();
+      addTearDown(harness.stop);
+
+      final client = AntdClient(baseUrl: harness.baseUrl);
+      addTearDown(client.close);
+
+      // Set the server to return data_map_address (simulates public flow).
+      harness.includeDataMapAddress = true;
+
+      final res = await client.finalizeUpload('up-pub-1', {'qh1': 'tx1'});
+      expect(res.dataMap, equals('deadbeef'));
+      expect(res.dataMapAddress, equals('cafebabe'));
+      expect(res.chunksStored, equals(4));
+      // Legacy address stays empty when daemon doesn't echo one.
+      expect(res.address, equals(''));
+    });
+
+    test('FinalizeUploadResult.dataMapAddress defaults to "" for old daemons', () {
+      // Pre-0.6.1 daemons don't return data_map_address — the field defaults
+      // cleanly to empty string instead of throwing.
+      final r = FinalizeUploadResult.fromJson({
+        'data_map': 'deadbeef',
+        'chunks_stored': 2,
+      });
+      expect(r.dataMapAddress, equals(''));
+      expect(r.dataMap, equals('deadbeef'));
+    });
+  });
+
+  group('Single-chunk external signer (V2-274)', () {
+    test('prepareChunkUpload base64-encodes data and parses wave-batch shape', () async {
+      final harness = await _ExternalSignerMockServer.start();
+      addTearDown(harness.stop);
+
+      final client = AntdClient(baseUrl: harness.baseUrl);
+      addTearDown(client.close);
+
+      final res = await client.prepareChunkUpload(
+        Uint8List.fromList(utf8.encode('hello')),
+      );
+
+      // Request: bytes must arrive base64-encoded under `data`.
+      expect(harness.lastChunkPrepareBody, isNotNull);
+      expect(harness.lastChunkPrepareBody!['data'], equals('aGVsbG8='));
+
+      expect(res.alreadyStored, isFalse);
+      expect(res.uploadId, equals('chunk-1'));
+      expect(res.paymentType, equals('wave_batch'));
+      expect(res.payments, hasLength(2));
+      expect(res.payments[0].quoteHash, equals('qh1'));
+      expect(res.payments[1].amount, equals('100'));
+      expect(res.totalAmount, equals('200'));
+      expect(res.paymentVaultAddress, equals('0xvault'));
+      expect(res.paymentTokenAddress, equals('0xtoken'));
+      expect(res.rpcUrl, equals('http://localhost:8545'));
+    });
+
+    test('prepareChunkUpload already_stored branch omits payment fields', () async {
+      final harness = await _ExternalSignerMockServer.start();
+      addTearDown(harness.stop);
+
+      final client = AntdClient(baseUrl: harness.baseUrl);
+      addTearDown(client.close);
+
+      harness.chunkAlreadyStored = true;
+
+      final res = await client.prepareChunkUpload(
+        Uint8List.fromList(utf8.encode('already-on-network')),
+      );
+
+      expect(res.alreadyStored, isTrue);
+      expect(res.address, isNotEmpty);
+      expect(res.uploadId, equals(''));
+      expect(res.payments, isEmpty);
+      expect(res.totalAmount, equals(''));
+      expect(res.paymentType, equals(''));
+    });
+
+    test('finalizeChunkUpload returns address and forwards body', () async {
+      final harness = await _ExternalSignerMockServer.start();
+      addTearDown(harness.stop);
+
+      final client = AntdClient(baseUrl: harness.baseUrl);
+      addTearDown(client.close);
+
+      final addr = await client.finalizeChunkUpload('chunk-1', {
+        'qh1': 'tx1',
+        'qh2': 'tx2',
+      });
+
+      expect(addr, isNotEmpty);
+      expect(addr.length, equals(64));
+
+      expect(harness.lastChunkFinalizeBody, isNotNull);
+      expect(harness.lastChunkFinalizeBody!['upload_id'], equals('chunk-1'));
+      final tx = harness.lastChunkFinalizeBody!['tx_hashes'] as Map<String, dynamic>;
+      expect(tx['qh1'], equals('tx1'));
+      expect(tx['qh2'], equals('tx2'));
+    });
+  });
+}
+
+/// Drains a `Stream<List<int>>` into a single byte list.
+Future<List<int>> _collect(Stream<List<int>> stream) async {
+  final out = <int>[];
+  await for (final chunk in stream) {
+    out.addAll(chunk);
+  }
+  return out;
+}
+
+/// Local HTTP server on an ephemeral port that mimics the antd daemon's
+/// streaming-download endpoints (`POST /v1/data/stream`,
+/// `GET /v1/data/public/{address}/stream`). Uses a real server so the test
+/// exercises the genuine `http.Client.send` streaming transport.
+class _StreamMockServer {
+  final HttpServer _server;
+
+  /// When true, the next streaming request returns a non-2xx `{"error"}` body.
+  bool failNext = false;
+
+  /// When true, an NDJSON stream emits a terminal `{"type":"error"}` frame
+  /// (after a 200 + a leading progress frame) instead of data frames.
+  bool ndjsonError = false;
+
+  Map<String, dynamic>? lastStreamBody;
+  String? lastPublicStreamPath;
+  String? lastAcceptHeader;
+
+  _StreamMockServer._(this._server);
+
+  String get baseUrl => 'http://${_server.address.host}:${_server.port}';
+
+  static Future<_StreamMockServer> start() async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final harness = _StreamMockServer._(server);
+    server.listen(harness._handle);
+    return harness;
+  }
+
+  Future<void> stop() async {
+    await _server.close(force: true);
+  }
+
+  Future<void> _handle(HttpRequest req) async {
+    final raw = await utf8.decoder.bind(req).join();
+    Map<String, dynamic>? body;
+    if (raw.isNotEmpty) {
+      try {
+        body = jsonDecode(raw) as Map<String, dynamic>;
+      } catch (_) {
+        body = null;
+      }
+    }
+
+    if (failNext) {
+      _sendJson(req, 404, {'error': 'no such data map'});
+      return;
+    }
+
+    lastAcceptHeader = req.headers.value('accept');
+    final wantsNdjson = lastAcceptHeader == 'application/x-ndjson';
+
+    final route = '${req.method} ${req.uri.path}';
+    switch (route) {
+      case 'POST /v1/data/stream':
+        lastStreamBody = body;
+        if (wantsNdjson) {
+          _sendNdjson(req, utf8.encode('streamed-secret'));
+        } else {
+          _sendBytes(req, utf8.encode('streamed-secret'));
+        }
+        break;
+      case 'GET /v1/data/public/pub-addr/stream':
+        lastPublicStreamPath = req.uri.path;
+        if (wantsNdjson) {
+          _sendNdjson(req, utf8.encode('streamed-public'));
+        } else {
+          _sendBytes(req, utf8.encode('streamed-public'));
+        }
+        break;
+      default:
+        _sendJson(req, 404, {'error': 'unknown route: $route'});
+    }
+  }
+
+  /// Streams an interleaved NDJSON body: a `meta` frame, a `progress` frame,
+  /// then either a terminal `error` frame ([ndjsonError]) or a base64 `data`
+  /// frame carrying [payload].
+  void _sendNdjson(HttpRequest req, List<int> payload) {
+    req.response.statusCode = 200;
+    req.response.headers.contentType = ContentType('application', 'x-ndjson');
+    final lines = <String>[
+      jsonEncode({'type': 'meta', 'total_size': payload.length}),
+      jsonEncode({'type': 'progress', 'phase': 'fetching', 'fetched': 1, 'total': 1}),
+    ];
+    if (ndjsonError) {
+      lines.add(jsonEncode({'type': 'error', 'message': 'decrypt failed'}));
+    } else {
+      lines.add(jsonEncode({'type': 'data', 'chunk': base64.encode(payload)}));
+    }
+    req.response.write(lines.map((l) => '$l\n').join());
+    req.response.close();
+  }
+
+  void _sendBytes(HttpRequest req, List<int> payload) {
+    req.response.statusCode = 200;
+    req.response.headers.contentType = ContentType.binary;
+    req.response.contentLength = payload.length;
+    req.response.add(payload);
+    req.response.close();
+  }
+
+  void _sendJson(HttpRequest req, int status, Map<String, dynamic> body) {
+    final payload = jsonEncode(body);
+    req.response.statusCode = status;
+    req.response.headers.contentType = ContentType.json;
+    req.response.contentLength = utf8.encode(payload).length;
+    req.response.write(payload);
+    req.response.close();
+  }
+}
+
+/// Local HTTP server on an ephemeral port that mimics the antd daemon's
+/// external-signer endpoints. Mirrors the Python test rig
+/// (`HTTPServer` on `127.0.0.1:0`) so the dart suite exercises the real
+/// `http.Client` transport, not just a request callback.
+class _ExternalSignerMockServer {
+  final HttpServer _server;
+
+  /// Toggle to make `/v1/chunks/prepare` return the already-stored branch.
+  bool chunkAlreadyStored = false;
+
+  /// Toggle to make `/v1/upload/finalize` echo a `data_map_address` (set by
+  /// the public-visibility flow).
+  bool includeDataMapAddress = false;
+
+  Map<String, dynamic>? lastPrepareBody;
+  Map<String, dynamic>? lastChunkPrepareBody;
+  Map<String, dynamic>? lastChunkFinalizeBody;
+
+  _ExternalSignerMockServer._(this._server);
+
+  String get baseUrl => 'http://${_server.address.host}:${_server.port}';
+
+  static Future<_ExternalSignerMockServer> start() async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final harness = _ExternalSignerMockServer._(server);
+    server.listen(harness._handle);
+    return harness;
+  }
+
+  Future<void> stop() async {
+    await _server.close(force: true);
+  }
+
+  Future<void> _handle(HttpRequest req) async {
+    final raw = await utf8.decoder.bind(req).join();
+    Map<String, dynamic>? body;
+    if (raw.isNotEmpty) {
+      try {
+        body = jsonDecode(raw) as Map<String, dynamic>;
+      } catch (_) {
+        body = null;
+      }
+    }
+
+    final route = '${req.method} ${req.uri.path}';
+    switch (route) {
+      case 'POST /v1/upload/prepare':
+        lastPrepareBody = body;
+        _send(req, 200, {
+          'upload_id': 'up-pub-1',
+          'payment_type': 'wave_batch',
+          'payments': [
+            {'quote_hash': 'qh1', 'rewards_address': 'ra1', 'amount': '100'},
+          ],
+          'total_amount': '100',
+          'payment_vault_address': 'dp1',
+          'payment_token_address': 'pt1',
+          'rpc_url': 'http://localhost:8545',
+          'total_chunks': 3,
+          'already_stored_count': 1,
+        });
+        break;
+
+      case 'POST /v1/upload/finalize':
+        final resp = <String, dynamic>{
+          'data_map': 'deadbeef',
+          'chunks_stored': 4,
+        };
+        if (includeDataMapAddress) {
+          resp['data_map_address'] = 'cafebabe';
+        }
+        _send(req, 200, resp);
+        break;
+
+      case 'POST /v1/chunks/prepare':
+        lastChunkPrepareBody = body;
+        if (chunkAlreadyStored) {
+          _send(req, 200, {
+            'address': 'bb' + ('11' * 31),
+            'already_stored': true,
+          });
+        } else {
+          _send(req, 200, {
+            'address': 'aa' + ('00' * 31),
+            'already_stored': false,
+            'upload_id': 'chunk-1',
+            'payment_type': 'wave_batch',
+            'payments': [
+              {'quote_hash': 'qh1', 'rewards_address': 'ra1', 'amount': '100'},
+              {'quote_hash': 'qh2', 'rewards_address': 'ra2', 'amount': '100'},
+            ],
+            'total_amount': '200',
+            'payment_vault_address': '0xvault',
+            'payment_token_address': '0xtoken',
+            'rpc_url': 'http://localhost:8545',
+          });
+        }
+        break;
+
+      case 'POST /v1/chunks/finalize':
+        lastChunkFinalizeBody = body;
+        _send(req, 200, {
+          'address': 'cc' + ('22' * 31),
+        });
+        break;
+
+      default:
+        _send(req, 404, {'error': 'unknown route: $route'});
+    }
+  }
+
+  void _send(HttpRequest req, int status, Map<String, dynamic> body) {
+    final payload = jsonEncode(body);
+    req.response.statusCode = status;
+    req.response.headers.contentType = ContentType.json;
+    req.response.contentLength = utf8.encode(payload).length;
+    req.response.write(payload);
+    req.response.close();
+  }
+}

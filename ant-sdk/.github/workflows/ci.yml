@@ -1,0 +1,126 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    # Negations skip CI when the only thing changed is documentation —
+    # spelling fixes in any README/CHANGELOG/SECURITY.md, the consolidated
+    # llms-full.txt LLM reference, or the antd/openapi.yaml REST spec
+    # (the daemon never loads it at runtime; it's pure documentation of
+    # the wire surface). A 5-minute Rust compile cycle adds no signal for
+    # those changes.
+    #
+    # GitHub Actions only allows EITHER `paths` OR `paths-ignore`, not both,
+    # so the negations live inside `paths`.
+    paths:
+      - "antd/**"
+      - "antd-rust/**"
+      - ".github/workflows/ci.yml"
+      - "!**/*.md"
+      - "!antd/openapi.yaml"
+      - "!llms-full.txt"
+  pull_request:
+    paths:
+      - "antd/**"
+      - "antd-rust/**"
+      - ".github/workflows/ci.yml"
+      - "!**/*.md"
+      - "!antd/openapi.yaml"
+      - "!llms-full.txt"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check-antd:
+    name: Check (antd)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: antd
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: antd
+
+      - uses: arduino/setup-protoc@v3
+        with:
+          version: "25.x"
+          # Authenticate to lift the action's release-list call from the
+          # ~60/hr per-IP unauth quota onto our 5,000/hr token quota.
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features --locked -- -D warnings
+
+      - name: Build docs
+        run: cargo doc --locked --no-deps
+
+      - name: Run tests
+        run: cargo test --locked
+
+  check-antd-rust:
+    name: Check (antd-rust)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: antd-rust
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: antd-rust
+
+      - uses: arduino/setup-protoc@v3
+        with:
+          version: "25.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features --locked -- -D warnings
+
+      - name: Build docs
+        run: cargo doc --locked --no-deps
+
+      - name: Run tests
+        run: cargo test --locked
+
+  audit:
+    name: Security audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Dedicated key so the cargo-audit tool binary survives across
+          # both directories without invalidation from per-crate diffs.
+          key: cargo-audit-tool
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Audit antd dependencies
+        working-directory: antd
+        run: cargo audit
+
+      - name: Audit antd-rust dependencies
+        working-directory: antd-rust
+        run: cargo audit

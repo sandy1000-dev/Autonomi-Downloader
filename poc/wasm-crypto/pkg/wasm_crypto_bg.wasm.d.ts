@@ -1,0 +1,34 @@
+/* tslint:disable */
+/* eslint-disable */
+export const memory: WebAssembly.Memory;
+export const content_hash: (a: number, b: number) => [number, number];
+export const datamap_from_bincode: (a: number, b: number) => [number, number, number, number];
+export const datamap_from_msgpack: (a: number, b: number) => [number, number, number, number];
+export const decrypt_chunk_wasm: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
+export const extract_src_hashes: (a: number, b: number) => [number, number, number, number];
+export const BrotliDecoderCreateInstance: (a: number, b: number, c: number) => number;
+export const BrotliDecoderDecompress: (a: number, b: number, c: number, d: number) => number;
+export const BrotliDecoderDecompressPrealloc: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => void;
+export const BrotliDecoderDecompressStream: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
+export const BrotliDecoderDecompressStreaming: (a: number, b: number, c: number, d: number, e: number) => number;
+export const BrotliDecoderDecompressWithReturnInfo: (a: number, b: number, c: number, d: number, e: number) => void;
+export const BrotliDecoderDestroyInstance: (a: number) => void;
+export const BrotliDecoderErrorString: (a: number) => number;
+export const BrotliDecoderFreeU8: (a: number, b: number, c: number) => void;
+export const BrotliDecoderFreeUsize: (a: number, b: number, c: number) => void;
+export const BrotliDecoderGetErrorCode: (a: number) => number;
+export const BrotliDecoderGetErrorString: (a: number) => number;
+export const BrotliDecoderHasMoreOutput: (a: number) => number;
+export const BrotliDecoderIsFinished: (a: number) => number;
+export const BrotliDecoderIsUsed: (a: number) => number;
+export const BrotliDecoderMallocU8: (a: number, b: number) => number;
+export const BrotliDecoderMallocUsize: (a: number, b: number) => number;
+export const BrotliDecoderSetParameter: (a: number, b: number, c: number) => void;
+export const BrotliDecoderTakeOutput: (a: number, b: number) => number;
+export const BrotliDecoderVersion: () => number;
+export const __wbindgen_externrefs: WebAssembly.Table;
+export const __wbindgen_malloc: (a: number, b: number) => number;
+export const __wbindgen_free: (a: number, b: number, c: number) => void;
+export const __externref_table_dealloc: (a: number) => void;
+export const __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
+export const __wbindgen_start: () => void;

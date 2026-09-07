@@ -1,0 +1,153 @@
+//! Payment orchestration for the Autonomi client.
+//!
+//! Connects quote collection, on-chain EVM payment, and proof serialization.
+//! Every PUT to the network requires a valid payment proof.
+
+use crate::data::client::batch::SingleNodeQuotePayment;
+use crate::data::client::quote::median_paid_quote_issuer;
+use crate::data::client::Client;
+use crate::data::error::{Error, Result};
+use ant_protocol::evm::{EncodedPeerId, ProofOfPayment, Wallet};
+use ant_protocol::payment::{serialize_single_node_proof, PaymentProof};
+use ant_protocol::transport::{MultiAddr, PeerId};
+use std::sync::Arc;
+use tracing::{debug, info};
+
+/// Single-node payment pays the selected median quote at 3x its quoted price.
+pub(crate) const SINGLE_NODE_PAYMENT_MULTIPLIER: u64 = 3;
+
+impl Client {
+    /// Get the wallet, returning an error if not configured.
+    pub(crate) fn require_wallet(&self) -> Result<&Arc<Wallet>> {
+        self.wallet().ok_or_else(|| {
+            Error::Payment("Wallet not configured — call with_wallet() first".to_string())
+        })
+    }
+
+    /// Pay for storage and return the serialized payment proof bytes.
+    ///
+    /// This orchestrates the full payment flow:
+    /// 1. Collect at least one witnessed quote plus ordered PUT targets
+    /// 2. Build single-node payment using node-reported prices (median 3x, others 0)
+    /// 3. Pay on-chain via the wallet
+    /// 4. Serialize `PaymentProof` with transaction hashes
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the wallet is not set, quotes cannot be collected,
+    /// on-chain payment fails, or serialization fails.
+    /// Returns `(proof_bytes, put_targets)`. The peer list is the ordered PUT
+    /// target set from quote planning: it starts with peers expected to accept
+    /// the paid proof and can include non-quoted fallback peers beyond the
+    /// quoted close group.
+    pub async fn pay_for_storage(
+        &self,
+        address: &[u8; 32],
+        data_size: u64,
+        data_type: u32,
+    ) -> Result<(Vec<u8>, Vec<(PeerId, Vec<MultiAddr>)>)> {
+        // Wallet is required for the on-chain payment step (step 4 below).
+        // Check early so we don't waste time collecting quotes for a misconfigured client.
+        let wallet = self.require_wallet()?;
+
+        debug!("Collecting quotes for address {}", hex::encode(address));
+
+        // 1. Collect at least one witnessed quote from the network
+        let quote_plan = self
+            .get_store_quote_plan(address, data_size, data_type)
+            .await?;
+        let quotes_with_peers = quote_plan.quotes;
+        let median_quote_issuer =
+            median_paid_quote_issuer(&quotes_with_peers).ok_or_else(|| {
+                Error::Payment(
+                    "Failed to select median quote issuer from witnessed quotes".to_string(),
+                )
+            })?;
+
+        // Capture the ordered PUT target set for replication by the caller.
+        // This can be wider than the peers that supplied the paid quotes.
+        let quoted_peers = quote_plan.put_peers;
+
+        // 2. Build peer_quotes for ProofOfPayment + quotes for single-node payment.
+        // Use node-reported prices directly — no contract price fetch needed.
+        let mut peer_quotes = Vec::with_capacity(quotes_with_peers.len());
+        let mut quotes_for_payment = Vec::with_capacity(quotes_with_peers.len());
+        // ADR-0004: forward the signed commitment each bound quote shipped, so
+        // the storers can cross-check the quote's count against the original
+        // commitment synchronously ("the commitment arrived with the quote").
+        // A baseline quote ships none. `get_store_quotes` already verified each
+        // quote's forced-price binding, so anything here is payable.
+        let mut commitment_sidecars = Vec::new();
+
+        for (peer_id, _addrs, quote, _price, commitment) in quotes_with_peers {
+            let encoded = peer_id_to_encoded(&peer_id)?;
+            peer_quotes.push((encoded, quote.clone()));
+            quotes_for_payment.push(quote);
+            if let Some(sidecar) = commitment {
+                commitment_sidecars.push(sidecar);
+            }
+        }
+
+        // 3. Create single-node payment (sorts by price, selects median)
+        let payment = SingleNodeQuotePayment::from_quotes(quotes_for_payment)
+            .map_err(|e| Error::Payment(format!("Failed to create payment: {e}")))?;
+
+        info!(
+            "Selected SNP median paid quote issuer {} for address {} (median price: {})",
+            median_quote_issuer.0,
+            hex::encode(address),
+            median_quote_issuer.1
+        );
+        info!("Payment total: {} atto", payment.total_amount());
+
+        // 4. Pay on-chain
+        let tx_hashes = payment
+            .pay(wallet)
+            .await
+            .map_err(|e| Error::Payment(format!("On-chain payment failed: {e}")))?;
+
+        info!(
+            "On-chain payment succeeded: {} transactions",
+            tx_hashes.len()
+        );
+
+        // 5. Build and serialize proof with version tag
+        let proof = PaymentProof {
+            proof_of_payment: ProofOfPayment { peer_quotes },
+            tx_hashes,
+            commitment_sidecars,
+        };
+
+        let proof_bytes = serialize_single_node_proof(&proof)
+            .map_err(|e| Error::Serialization(format!("Failed to serialize payment proof: {e}")))?;
+
+        Ok((proof_bytes, quoted_peers))
+    }
+
+    /// Approve the wallet to spend tokens on the payment vault contract.
+    ///
+    /// This must be called once before any payments can be made.
+    /// Approves `U256::MAX` (unlimited) spending.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the wallet is not set or the approval transaction fails.
+    pub async fn approve_token_spend(&self) -> Result<()> {
+        let wallet = self.require_wallet()?;
+        let evm_network = self.require_evm_network()?;
+
+        let vault_address = evm_network.payment_vault_address();
+        wallet
+            .approve_to_spend_tokens(*vault_address, ant_protocol::evm::U256::MAX)
+            .await
+            .map_err(|e| Error::Payment(format!("Token approval failed: {e}")))?;
+        info!("Token spend approved for payment vault contract");
+
+        Ok(())
+    }
+}
+
+/// Convert an ant-node `PeerId` to an `EncodedPeerId` for payment proofs.
+pub(crate) fn peer_id_to_encoded(peer_id: &PeerId) -> Result<EncodedPeerId> {
+    Ok(EncodedPeerId::new(*peer_id.as_bytes()))
+}

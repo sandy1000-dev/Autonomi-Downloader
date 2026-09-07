@@ -1,0 +1,85 @@
+# Rust
+target/
+target-dev/
+**/*.rs.bk
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+.venv/
+venv/
+
+# Node.js
+node_modules/
+
+# C# / .NET
+bin/
+obj/
+*.user
+*.suo
+*.csproj.user
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Dart
+.dart_tool/
+pubspec.lock
+
+# PHP
+vendor/
+composer.lock
+composer-setup.php
+composer.phar
+
+# Elixir
+_build/
+deps/
+.elixir_ls/
+mix.lock
+
+# Zig
+.zig-cache/
+zig-out/
+
+# C++ CMake
+build/
+CMakeCache.txt
+CMakeFiles/
+
+# Ruby
+Gemfile.lock
+.bundle/
+
+# Java
+out/
+.gradle/
+*.class
+
+# Claude
+.claude/
+
+# Lua
+.luarocks/
+
+# ant-dev state
+.ant-dev/
+
+# Logs
+*.log
+
+# Sweep script output dirs (scripts/full-stack-sweep.sh, scripts/integration-sweep.sh)
+.full-stack-sweep-results/
+.integration-results/

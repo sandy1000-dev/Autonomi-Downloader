@@ -1,0 +1,1372 @@
+# antd SDK — Complete API Reference
+
+> JavaScript/TypeScript, Python, C#, Kotlin, Swift, Go, Java, Rust, C++, Ruby, PHP, Dart, Lua, Elixir, and Zig SDKs for the Autonomi network via the antd daemon. The daemon manages wallet, payments, and network connectivity. Clients connect over REST (default port 8082) or gRPC (default port 50051). All SDKs support automatic port discovery.
+
+## Port Discovery
+
+All SDKs can automatically discover a running antd daemon. On startup, antd writes a `daemon.port` file containing the REST port (line 1) and gRPC port (line 2) to a platform-specific location:
+
+- **Windows:** `%APPDATA%\ant\daemon.port`
+- **Linux:** `$XDG_DATA_HOME/ant/daemon.port` (or `~/.local/share/ant/daemon.port`)
+- **macOS:** `~/Library/Application Support/ant/daemon.port`
+
+Every SDK provides auto-discover constructors that read this file and connect automatically, falling back to the default ports if no file is found:
+
+| Language | REST Auto-Discover | gRPC Auto-Discover |
+|----------|-------------------|-------------------|
+| Python | `RestClient.auto_discover()` | `GrpcClient.auto_discover()` |
+| Go | `antd.NewClientAutoDiscover()` | `antd.NewGrpcClientAutoDiscover()` |
+| TypeScript | `RestClient.autoDiscover()` | N/A |
+| C# | `AntdRestClient.AutoDiscover()` | `AntdGrpcClient.AutoDiscover()` |
+| Java | `AntdClient.autoDiscover()` | `GrpcAntdClient.autoDiscover()` |
+| Rust | `Client::auto_discover()` | `GrpcClient::auto_discover()` |
+| Kotlin | `AntdRestClient.autoDiscover()` | `AntdGrpcClient.autoDiscover()` |
+| C++ | `Client::auto_discover()` | `GrpcClient::auto_discover()` |
+| Dart | `AntdClient.autoDiscover()` | `GrpcAntdClient.autoDiscover()` |
+| Elixir | `Antd.Client.auto_discover()` | `Antd.GrpcClient.auto_discover()` |
+| Ruby | `Antd::Client.auto_discover` | `Antd::GrpcClient.auto_discover` |
+| Swift | `DaemonDiscovery.autoDiscover()` | `DaemonDiscovery.autoDiscoverGrpc()` |
+| PHP | `AntdClient::autoDiscover()` | N/A |
+| Lua | `Client.auto_discover()` | N/A |
+| Zig | `Client.autoDiscover(allocator)` | N/A |
+
+This is especially useful when antd is spawned with `--rest-port 0` (OS assigns a free port), as in managed mode.
+
+## Quick Start
+
+```python
+from antd import AntdClient
+
+client = AntdClient()                          # REST, localhost:8082
+client = AntdClient(transport="grpc")          # gRPC, localhost:50051
+client = AntdClient(base_url="http://remote:8082")
+
+# Store and retrieve data (payment_mode defaults to "auto")
+result = client.data_put_public(b"hello world")
+print(result.address, result.cost)
+data = client.data_get_public(result.address)  # b"hello world"
+
+# Explicit payment mode for large uploads
+result = client.data_put_public(large_data, payment_mode="merkle")
+```
+
+```typescript
+import { createClient } from "antd";
+
+const client = createClient();                             // REST, localhost:8082
+const client = createClient({ baseUrl: "http://remote:8082" });
+
+const result = await client.dataPutPublic(Buffer.from("hello"));
+const data = await client.dataGetPublic(result.address);
+```
+
+```csharp
+using Antd.Sdk;
+
+var client = AntdClientFactory.CreateRest();    // REST, localhost:8082
+var client = AntdClientFactory.CreateGrpc();    // gRPC, localhost:50051
+
+var result = await client.DataPutPublicAsync(Encoding.UTF8.GetBytes("hello"));
+var data = await client.DataGetPublicAsync(result.Address);
+```
+
+```kotlin
+import com.autonomi.sdk.*
+import kotlinx.coroutines.runBlocking
+
+fun main() = runBlocking {
+    val client = AntdClient.createRest()         // REST, localhost:8082
+    val client = AntdClient.createGrpc()         // gRPC, localhost:50051
+
+    val result = client.dataPutPublic("hello".toByteArray())
+    val data = client.dataGetPublic(result.address)
+}
+```
+
+```swift
+// Swift (macOS only — iOS apps should use the FFI bindings)
+import AntdSdk
+
+let client = try AntdClient.createRest()          // REST, localhost:8082
+let client = try AntdClient.createGrpc()          // gRPC, localhost:50051
+
+let result = try await client.dataPutPublic("hello".data(using: .utf8)!)
+let data = try await client.dataGetPublic(address: result.address)
+```
+
+```go
+// Go
+import antd "github.com/WithAutonomi/ant-sdk/antd-go"
+
+client := antd.NewClient(antd.DefaultBaseURL)       // REST, localhost:8082
+ctx := context.Background()
+
+result, _ := client.DataPutPublic(ctx, []byte("hello"))
+data, _ := client.DataGetPublic(ctx, result.Address)
+```
+
+```java
+// Java — Gradle: implementation("com.autonomi:antd-java:0.1.0")
+//        Maven: <dependency><groupId>com.autonomi</groupId><artifactId>antd-java</artifactId><version>0.1.0</version></dependency>
+import com.autonomi.antd.AntdClient;
+
+try (AntdClient client = AntdClient.create()) {           // REST, localhost:8082
+    PutResult result = client.dataPutPublic("hello".getBytes());
+    byte[] data = client.dataGetPublic(result.address());
+}
+```
+
+```rust
+// Rust — cargo add antd-client
+use antd_client::Client;
+
+#[tokio::main]
+async fn main() -> Result<(), antd_client::AntdError> {
+    let client = Client::new("http://localhost:8082");     // REST, localhost:8082
+
+    let result = client.data_put_public(b"hello").await?;
+    let data = client.data_get_public(&result.address).await?;
+    Ok(())
+}
+```
+
+```cpp
+// C++ — CMake FetchContent from GitHub
+#include <antd/antd.hpp>
+
+antd::Client client;                                       // REST, localhost:8082
+antd::Client client("http://remote:8082");
+
+auto result = client.dataPutPublic("hello");
+auto data = client.dataGetPublic(result.address);
+```
+
+```ruby
+# Ruby — gem install antd
+require "antd"
+
+client = Antd::Client.new                            # REST, localhost:8082
+client = Antd::Client.new(base_url: "http://remote:8082")
+
+result = client.data_put_public("hello")
+data = client.data_get_public(result.address)
+```
+
+```php
+// PHP — composer require autonomi/antd
+<?php
+use Autonomi\AntdClient;
+
+$client = AntdClient::create();                      // REST, localhost:8082
+$client = AntdClient::create("http://remote:8082");
+
+$result = $client->dataPutPublic("hello");
+$data = $client->dataGetPublic($result->address);
+```
+
+```dart
+// Dart — dart pub add antd
+import 'package:antd/antd.dart';
+
+final client = AntdClient();                         // REST, localhost:8082
+final client = AntdClient(baseUrl: 'http://remote:8082');
+
+final result = await client.dataPutPublic('hello'.codeUnits);
+final data = await client.dataGetPublic(result.address);
+```
+
+```lua
+-- Lua — luarocks install antd
+local antd = require("antd")
+
+local client = antd.Client.new()                     -- REST, localhost:8082
+local client = antd.Client.new({base_url = "http://remote:8082"})
+
+local result = client:data_put_public("hello")
+local data = client:data_get_public(result.address)
+```
+
+```elixir
+# Elixir — {:antd, "~> 0.1"} in mix.exs deps
+client = Antd.Client.new()                           # REST, localhost:8082
+client = Antd.Client.new(base_url: "http://remote:8082")
+
+{:ok, result} = Antd.Client.data_put_public(client, "hello")
+{:ok, data} = Antd.Client.data_get_public(client, result.address)
+```
+
+```zig
+// Zig — add dependency in build.zig.zon
+const antd = @import("antd");
+
+var client = try antd.Client.init(.{});              // REST, localhost:8082
+defer client.deinit();
+
+const result = try client.dataPutPublic("hello");
+const data = try client.dataGetPublic(result.address);
+```
+
+---
+
+## REST API — All Endpoints
+
+### Health
+
+#### `GET /health`
+Returns daemon health and network name.
+
+Response: `{"status": "ok", "network": "local"}`
+
+### Data
+
+#### `POST /v1/data/public`
+Store public (unencrypted) data on the network.
+
+Request: `{"data": "<base64>", "payment_mode": "auto"}` (payment_mode is optional, defaults to "auto")
+Response: `{"address": "<hex>", "chunks_stored": <uint>, "payment_mode_used": "auto|merkle|single"}`
+
+#### `GET /v1/data/public/{addr}`
+Retrieve public data by hex address.
+
+Response: `{"data": "<base64>"}`
+
+#### `GET /v1/data/public/{addr}/stream`
+Stream public data as chunked response. Same path params as above.
+
+#### `POST /v1/data/private`
+Store private (encrypted) data. Returns a data map instead of address.
+
+Request: `{"data": "<base64>", "payment_mode": "auto"}` (payment_mode is optional, defaults to "auto")
+Response: `{"data_map": "<hex>", "chunks_stored": <uint>, "payment_mode_used": "auto|merkle|single"}`
+
+#### `GET /v1/data/private`
+Retrieve private data using data map.
+
+Query params: `data_map=<hex>`
+Response: `{"data": "<base64>"}`
+
+#### `POST /v1/data/cost`
+Estimate cost to store data. Samples up to 5 chunk addresses for the on-chain
+quote, then extrapolates — much faster than quoting every chunk.
+
+Request: `{"data": "<base64>"}`
+Response: `{"cost": "<atto_tokens>", "file_size": <uint>, "chunk_count": <uint>, "estimated_gas_cost_wei": "<wei>", "payment_mode": "auto|merkle|single"}`
+
+### Chunks
+
+#### `POST /v1/chunks`
+Store a raw chunk.
+
+Request: `{"data": "<base64>"}`
+Response: `{"cost": "<atto_tokens>", "address": "<hex>"}`
+
+#### `GET /v1/chunks/{addr}`
+Retrieve a raw chunk by hex address.
+
+Response: `{"data": "<base64>"}`
+
+### Files
+
+Upload and download files/directories from the local filesystem.
+
+#### `POST /v1/files/upload/public`
+Upload a local file.
+
+Request: `{"path": "/absolute/path/to/file", "payment_mode": "auto"}` (payment_mode is optional, defaults to "auto")
+Response: `{"address": "<hex>", "storage_cost_atto": "<atto>", "gas_cost_wei": "<wei>", "chunks_stored": <uint>, "payment_mode_used": "auto|merkle|single"}`
+
+#### `POST /v1/files/download/public`
+Download a file to a local path.
+
+Request: `{"address": "<hex>", "dest_path": "/absolute/path"}`
+
+#### `POST /v1/files`
+Upload a local file *privately*. Returns a caller-held DataMap; the DataMap is NOT stored on-network.
+
+Request: `{"path": "/absolute/path/to/file", "payment_mode": "auto"}` (payment_mode is optional, defaults to "auto")
+Response: `{"data_map": "<hex>", "storage_cost_atto": "<atto>", "gas_cost_wei": "<wei>", "chunks_stored": <uint>, "payment_mode_used": "auto|merkle|single"}`
+
+#### `POST /v1/files/get`
+Download a private file from a caller-held DataMap into a local path.
+
+Request: `{"data_map": "<hex>", "dest_path": "/absolute/path"}`
+
+#### `POST /v1/files/cost`
+Estimate file upload cost. Samples up to 5 chunk addresses for the on-chain
+quote, then extrapolates — much faster than quoting every chunk.
+
+Request: `{"path": "/path/to/file", "is_public": true}` (`is_public` optional, defaults to true)
+Response: `{"cost": "<atto_tokens>", "file_size": <uint>, "chunk_count": <uint>, "estimated_gas_cost_wei": "<wei>", "payment_mode": "auto|merkle|single"}`
+
+#### `GET /v1/wallet/address`
+Get the wallet's public address.
+
+Response: `{"address": "0x..."}`
+Returns 400 if no wallet is configured.
+
+#### `GET /v1/wallet/balance`
+Get the wallet's token and gas balances.
+
+Response: `{"balance": "<atto_tokens>", "gas_balance": "<atto_tokens>"}`
+Returns 400 if no wallet is configured.
+
+#### `POST /v1/wallet/approve`
+Approve the wallet to spend tokens on payment contracts (one-time operation before any storage).
+
+Request: `{}` (empty body)
+Response: `{"approved": true}`
+Returns 400 if no wallet is configured.
+
+#### `POST /v1/data/prepare`
+Prepare a data upload for external signing (two-phase upload). Instead of antd paying
+from its built-in wallet, this returns payment details for an external signer.
+
+Request: `{"data": "base64-encoded-bytes"}`
+
+The response includes a `payment_type` discriminator that determines the payment flow:
+
+**Wave-batch response** (< 64 chunks — call `payForQuotes()`, finalize with `tx_hashes`):
+```json
+{
+  "upload_id": "hex-string",
+  "payment_type": "wave_batch",
+  "payments": [
+    { "quote_hash": "0x...", "rewards_address": "0x...", "amount": "123" }
+  ],
+  "total_amount": "456",
+  "payment_vault_address": "0x...",
+  "payment_token_address": "0x...",
+  "rpc_url": "http://...",
+  "total_chunks": 3,
+  "already_stored_count": 1
+}
+```
+
+`total_chunks` and `already_stored_count` were added in antd 0.10.0 (older daemons omit them; SDKs default both to 0). They report the already-stored preflight: the signer pays for `total_chunks - already_stored_count` chunks, so a prepare can legitimately come back cheaper than the raw file size implies.
+
+**Merkle response** (>= 64 chunks — call `payForMerkleTree()`, finalize with `winner_pool_hash`):
+```json
+{
+  "upload_id": "hex-string",
+  "payment_type": "merkle",
+  "depth": 5,
+  "pool_commitments": [
+    {
+      "pool_hash": "0x...",
+      "candidates": [
+        { "rewards_address": "0x...", "amount": "1000" }
+      ]
+    }
+  ],
+  "merkle_payment_timestamp": 1712150400,
+  "payment_vault_address": "0x...",
+  "total_amount": "0",
+  "payment_token_address": "0x...",
+  "rpc_url": "http://...",
+  "total_chunks": 128,
+  "already_stored_count": 4
+}
+```
+
+#### `POST /v1/upload/prepare`
+Prepare a file upload for external signing. Same response format as `/v1/data/prepare`.
+
+Request: `{"path": "/path/to/file"}`
+
+#### `POST /v1/upload/finalize`
+Finalize an upload after an external signer has submitted payment on-chain.
+Provide either `tx_hashes` (wave_batch) or `winner_pool_hash` (merkle).
+
+Wave-batch request: `{"upload_id": "hex", "tx_hashes": {"0xquotehash": "0xtxhash", ...}}`
+Merkle request: `{"upload_id": "hex", "winner_pool_hash": "0x..."}`
+Response: `{"data_map": "hex", "address": "hex", "chunks_stored": 5}`
+
+#### `POST /v1/chunks/prepare`
+Prepare a single-chunk upload for external signing. The bytes are stored
+verbatim as one chunk at their BLAKE3 address — no self-encryption. Unlike
+`POST /v1/chunks`, this handler does NOT require the daemon to have a wallet;
+all funds flow through the external signer.
+
+Request: `{"data": "<base64>"}`
+
+When the chunk is already on-network (no payment needed, no finalize call):
+```json
+{ "address": "<hex>", "already_stored": true }
+```
+
+When payment is needed (wave_batch shape — `payForQuotes()` then call `/v1/chunks/finalize` with the resulting `tx_hashes`):
+```json
+{
+  "address": "<hex>",
+  "already_stored": false,
+  "upload_id": "<hex>",
+  "payment_type": "wave_batch",
+  "payments": [
+    { "quote_hash": "0x...", "rewards_address": "0x...", "amount": "123" }
+  ],
+  "total_amount": "456",
+  "payment_vault_address": "0x...",
+  "payment_token_address": "0x...",
+  "rpc_url": "http://..."
+}
+```
+
+#### `POST /v1/chunks/finalize`
+Finalize a single-chunk upload after the external signer has paid the quotes
+returned by `/v1/chunks/prepare`.
+
+Request: `{"upload_id": "<hex>", "tx_hashes": {"0xquotehash": "0xtxhash", ...}}`
+Response: `{"address": "<hex>"}`
+
+---
+
+## gRPC API — All Services
+
+Default target: `localhost:50051`. Package: `antd.v1`.
+
+### HealthService (health.proto)
+- `Check(HealthCheckRequest) → HealthCheckResponse` — returns status and network name
+
+### DataService (data.proto)
+- `GetPublic(GetPublicDataRequest{address}) → GetPublicDataResponse{data: bytes}`
+- `PutPublic(PutPublicDataRequest{data: bytes}) → PutPublicDataResponse{cost, address}`
+- `StreamPublic(StreamPublicDataRequest{address}) → stream DataChunk{data: bytes}`
+- `GetPrivate(GetPrivateDataRequest{data_map}) → GetPrivateDataResponse{data: bytes}`
+- `PutPrivate(PutPrivateDataRequest{data: bytes}) → PutPrivateDataResponse{cost, data_map}`
+- `GetCost(DataCostRequest{data: bytes}) → Cost{atto_tokens, file_size, chunk_count, estimated_gas_cost_wei, payment_mode}`
+
+### ChunkService (chunks.proto)
+- `Get(GetChunkRequest{address}) → GetChunkResponse{data: bytes}`
+- `Put(PutChunkRequest{data: bytes}) → PutChunkResponse{cost, address}`
+
+### FileService (files.proto)
+- `UploadPublic(UploadFileRequest{path}) → UploadPublicResponse{cost, address}`
+- `DownloadPublic(DownloadPublicRequest{address, dest_path}) → DownloadResponse{}`
+- `GetFileCost(FileCostRequest{path, is_public}) → Cost{atto_tokens, file_size, chunk_count, estimated_gas_cost_wei, payment_mode}`
+
+### EventService (events.proto)
+- `Subscribe(SubscribeRequest{}) → stream ClientEventProto{kind, records_paid, records_already_paid, tokens_spent}`
+
+### SDKs with gRPC support
+Go, Python, C#, Kotlin, Swift, Rust, Java, C++, Dart, Ruby, Elixir (11 of 15 SDKs).
+JS/TS, PHP, Lua, and Zig are REST-only.
+
+---
+
+## Model Types
+
+### Common (both SDKs)
+
+| Type | Fields | Description |
+|------|--------|-------------|
+| HealthStatus | ok: bool, network: string | Health check result |
+| PutResult | cost: string, address: string | Result from any create/put operation |
+| UploadCostEstimate | cost: string, file_size: u64, chunk_count: u32, estimated_gas_cost_wei: string, payment_mode: string | Pre-upload cost breakdown returned by data_cost / file_cost. Server samples up to 5 chunk addresses and extrapolates; gas is an advisory heuristic. |
+
+---
+
+## Payment Modes
+
+All data and file upload operations accept an optional `payment_mode` parameter that controls how storage payments are batched:
+
+| Mode | Behavior |
+|------|----------|
+| `"auto"` (default) | Uses merkle batch payments for uploads of 64+ chunks, single payments otherwise. Best for general use. |
+| `"merkle"` | Forces merkle batch payments regardless of chunk count (minimum 2 chunks). Saves gas on larger uploads. |
+| `"single"` | Forces per-chunk payments. Useful for small data or debugging. |
+
+This applies to all PUT endpoints (`data_put_public`, `data_put_private`, `file_upload_public`) across all SDKs. The parameter is always optional and defaults to `"auto"`.
+
+**REST:** Include `"payment_mode": "merkle"` in the JSON request body.
+
+**SDK examples:**
+```python
+# Python
+result = client.data_put_public(data, payment_mode="merkle")
+```
+```go
+// Go
+result, err := client.DataPutPublic(ctx, data, antd.WithPaymentMode("merkle"))
+```
+```typescript
+// TypeScript
+const result = await client.dataPutPublic(data, { paymentMode: "merkle" });
+```
+
+---
+
+## JS/TS SDK Method Signatures
+
+```typescript
+import { createClient } from "antd";
+
+const client = createClient();                                  // REST, localhost:8082
+const client = createClient({ baseUrl: "http://remote:8082" }); // custom URL
+const client = createClient({ timeout: 60_000 });               // custom timeout (ms)
+
+// Health
+client.health(): Promise<HealthStatus>
+
+// Data
+client.dataPutPublic(data: Buffer, opts?: { paymentMode?: PaymentMode }): Promise<DataPutPublicResult>
+client.dataGetPublic(address: string): Promise<Buffer>
+client.dataPut(data: Buffer, opts?: { paymentMode?: PaymentMode }): Promise<DataPutResult>
+client.dataGet(dataMap: string): Promise<Buffer>
+client.dataCost(data: Buffer, opts?: { paymentMode?: PaymentMode }): Promise<UploadCostEstimate>
+
+// Chunks
+client.chunkPut(data: Buffer): Promise<PutResult>
+client.chunkGet(address: string): Promise<Buffer>
+
+// Files
+client.filePut(path: string, opts?: { paymentMode?: PaymentMode }): Promise<FilePutResult>
+client.fileGet(dataMap: string, destPath: string): Promise<void>
+client.filePutPublic(path: string, opts?: { paymentMode?: PaymentMode }): Promise<FilePutPublicResult>
+client.fileGetPublic(address: string, destPath: string): Promise<void>
+client.fileCost(path: string, isPublic?: boolean, opts?: { paymentMode?: PaymentMode }): Promise<UploadCostEstimate>
+
+// Wallet
+client.walletAddress(): Promise<WalletAddress>
+client.walletBalance(): Promise<WalletBalance>
+client.walletApprove(): Promise<boolean>
+```
+
+---
+
+## Python SDK Method Signatures
+
+```python
+from antd import AntdClient, AsyncAntdClient
+
+client = AntdClient(transport="rest", base_url="http://localhost:8082")
+client = AntdClient(transport="grpc", target="localhost:50051")
+
+# Health
+client.health() → HealthStatus
+
+# Data
+client.data_put_public(data: bytes, payment_mode: PaymentMode = PaymentMode.AUTO) → DataPutPublicResult
+client.data_get_public(address: str) → bytes
+client.data_put(data: bytes, payment_mode: PaymentMode = PaymentMode.AUTO) → DataPutResult
+client.data_get(data_map: str) → bytes
+client.data_cost(data: bytes, payment_mode: PaymentMode = PaymentMode.AUTO) → UploadCostEstimate
+
+# Chunks
+client.chunk_put(data: bytes) → PutResult
+client.chunk_get(address: str) → bytes
+
+# Files
+client.file_put(path: str, payment_mode: PaymentMode = PaymentMode.AUTO) → FilePutResult
+client.file_get(data_map: str, dest_path: str) → None
+client.file_put_public(path: str, payment_mode: PaymentMode = PaymentMode.AUTO) → FilePutPublicResult
+client.file_get_public(address: str, dest_path: str) → None
+client.file_cost(path: str, is_public: bool = True, payment_mode: PaymentMode = PaymentMode.AUTO) → UploadCostEstimate
+
+# Wallet
+client.wallet_address() → WalletAddress
+client.wallet_balance() → WalletBalance
+client.wallet_approve() → bool
+```
+
+---
+
+## C# SDK Method Signatures
+
+```csharp
+using Antd.Sdk;
+
+IAntdClient client = AntdClientFactory.CreateRest();   // localhost:8082
+IAntdClient client = AntdClientFactory.CreateGrpc();   // localhost:50051
+
+// Health
+Task<HealthStatus> HealthAsync();
+
+// Data
+Task<DataPutPublicResult> DataPutPublicAsync(byte[] data, PaymentMode paymentMode = PaymentMode.Auto);
+Task<byte[]> DataGetPublicAsync(string address);
+Task<DataPutResult> DataPutAsync(byte[] data, PaymentMode paymentMode = PaymentMode.Auto);
+Task<byte[]> DataGetAsync(string dataMap);
+Task<UploadCostEstimate> DataCostAsync(byte[] data, PaymentMode paymentMode = PaymentMode.Auto);
+
+// Chunks
+Task<PutResult> ChunkPutAsync(byte[] data);
+Task<byte[]> ChunkGetAsync(string address);
+
+// Files
+Task<FilePutResult> FilePutAsync(string path, PaymentMode paymentMode = PaymentMode.Auto);
+Task FileGetAsync(string dataMap, string destPath);
+Task<FilePutPublicResult> FilePutPublicAsync(string path, PaymentMode paymentMode = PaymentMode.Auto);
+Task FileGetPublicAsync(string address, string destPath);
+Task<UploadCostEstimate> FileCostAsync(string path, bool isPublic = true, PaymentMode paymentMode = PaymentMode.Auto);
+
+// Wallet
+Task<WalletAddress> WalletAddressAsync();
+Task<WalletBalance> WalletBalanceAsync();
+Task<bool> WalletApproveAsync();
+```
+
+---
+
+## Kotlin SDK Method Signatures
+
+```kotlin
+import com.autonomi.sdk.*
+
+val client = AntdClient.createRest()          // localhost:8082
+val client = AntdClient.createGrpc()          // localhost:50051
+
+// Health
+suspend fun health(): HealthStatus
+
+// Data
+suspend fun dataPutPublic(data: ByteArray, paymentMode: PaymentMode = PaymentMode.Auto): DataPutPublicResult
+suspend fun dataGetPublic(address: String): ByteArray
+suspend fun dataPut(data: ByteArray, paymentMode: PaymentMode = PaymentMode.Auto): DataPutResult
+suspend fun dataGet(dataMap: String): ByteArray
+suspend fun dataCost(data: ByteArray, paymentMode: PaymentMode = PaymentMode.Auto): UploadCostEstimate
+
+// Chunks
+suspend fun chunkPut(data: ByteArray): PutResult
+suspend fun chunkGet(address: String): ByteArray
+
+// Files
+suspend fun filePut(path: String, paymentMode: PaymentMode = PaymentMode.Auto): FilePutResult
+suspend fun fileGet(dataMap: String, destPath: String)
+suspend fun filePutPublic(path: String, paymentMode: PaymentMode = PaymentMode.Auto): FilePutPublicResult
+suspend fun fileGetPublic(address: String, destPath: String)
+suspend fun fileCost(path: String, isPublic: Boolean = true, paymentMode: PaymentMode = PaymentMode.Auto): UploadCostEstimate
+
+// Wallet
+suspend fun walletAddress(): WalletAddress
+suspend fun walletBalance(): WalletBalance
+suspend fun walletApprove(): Boolean
+```
+
+---
+
+## Swift SDK Method Signatures
+
+> REST/gRPC transport requires macOS. For iOS, use the FFI bindings.
+
+```swift
+import AntdSdk
+
+let client = try AntdClient.createRest()          // localhost:8082
+let client = try AntdClient.createGrpc()          // localhost:50051
+
+// Health
+func health() async throws -> HealthStatus
+
+// Data
+func dataPutPublic(_ data: Data, paymentMode: PaymentMode = .auto) async throws -> DataPutPublicResult
+func dataGetPublic(address: String) async throws -> Data
+func dataPut(_ data: Data, paymentMode: PaymentMode = .auto) async throws -> DataPutResult
+func dataGet(dataMap: String) async throws -> Data
+func dataCost(_ data: Data, paymentMode: PaymentMode = .auto) async throws -> UploadCostEstimate
+
+// Chunks
+func chunkPut(_ data: Data) async throws -> PutResult
+func chunkGet(address: String) async throws -> Data
+
+// Files
+func filePut(path: String, paymentMode: PaymentMode = .auto) async throws -> FilePutResult
+func fileGet(dataMap: String, destPath: String) async throws
+func filePutPublic(path: String, paymentMode: PaymentMode = .auto) async throws -> FilePutPublicResult
+func fileGetPublic(address: String, destPath: String) async throws
+func fileCost(path: String, isPublic: Bool, paymentMode: PaymentMode = .auto) async throws -> UploadCostEstimate
+
+// Wallet
+func walletAddress() async throws -> WalletAddress
+func walletBalance() async throws -> WalletBalance
+func walletApprove() async throws -> Bool
+```
+
+---
+
+## Go SDK Method Signatures
+
+```go
+import antd "github.com/WithAutonomi/ant-sdk/antd-go"
+
+client := antd.NewClient(antd.DefaultBaseURL)        // localhost:8082
+
+// Health
+func (c *Client) Health(ctx context.Context) (*HealthStatus, error)
+
+// Data
+func (c *Client) DataPutPublic(ctx context.Context, data []byte, paymentMode PaymentMode) (*DataPutPublicResult, error)
+func (c *Client) DataGetPublic(ctx context.Context, address string) ([]byte, error)
+func (c *Client) DataPut(ctx context.Context, data []byte, paymentMode PaymentMode) (*DataPutResult, error)
+func (c *Client) DataGet(ctx context.Context, dataMap string) ([]byte, error)
+func (c *Client) DataCost(ctx context.Context, data []byte, paymentMode PaymentMode) (*UploadCostEstimate, error)
+
+// Data — private = unqualified verb, public = _public suffix.
+func (c *Client) DataPut(ctx context.Context, data []byte, paymentMode PaymentMode) (*DataPutResult, error)
+func (c *Client) DataGet(ctx context.Context, dataMap string) ([]byte, error)
+func (c *Client) DataPutPublic(ctx context.Context, data []byte, paymentMode PaymentMode) (*DataPutPublicResult, error)
+func (c *Client) DataGetPublic(ctx context.Context, address string) ([]byte, error)
+func (c *Client) DataCost(ctx context.Context, data []byte, paymentMode PaymentMode) (*UploadCostEstimate, error)
+
+// Chunks (no payment_mode — single-chunk primitive, no batch to optimize)
+func (c *Client) ChunkPut(ctx context.Context, data []byte) (*PutResult, error)
+func (c *Client) ChunkGet(ctx context.Context, address string) ([]byte, error)
+
+// Files
+func (c *Client) FilePut(ctx context.Context, path string, paymentMode PaymentMode) (*FilePutResult, error)
+func (c *Client) FileGet(ctx context.Context, dataMap string, destPath string) error
+func (c *Client) FilePutPublic(ctx context.Context, path string, paymentMode PaymentMode) (*FilePutPublicResult, error)
+func (c *Client) FileGetPublic(ctx context.Context, address string, destPath string) error
+func (c *Client) FileCost(ctx context.Context, path string, isPublic bool, paymentMode PaymentMode) (*UploadCostEstimate, error)
+
+// Wallet
+func (c *Client) WalletAddress(ctx context.Context) (*WalletAddress, error)
+func (c *Client) WalletBalance(ctx context.Context) (*WalletBalance, error)
+func (c *Client) WalletApprove(ctx context.Context) error
+```
+
+---
+
+## Java SDK Method Signatures
+
+```java
+// Gradle: implementation("com.autonomi:antd-java:0.1.0")
+// Maven:  <dependency><groupId>com.autonomi</groupId><artifactId>antd-java</artifactId><version>0.1.0</version></dependency>
+import com.autonomi.antd.AntdClient;
+
+AntdClient client = AntdClient.create();                  // REST, localhost:8082
+AntdClient client = AntdClient.create("http://remote:8082");
+
+// Health
+HealthStatus health() throws AntdException
+
+// Data
+DataPutPublicResult dataPutPublic(byte[] data, PaymentMode paymentMode) throws AntdException
+byte[] dataGetPublic(String address) throws AntdException
+DataPutResult dataPut(byte[] data, PaymentMode paymentMode) throws AntdException
+byte[] dataGet(String dataMap) throws AntdException
+UploadCostEstimate dataCost(byte[] data, PaymentMode paymentMode) throws AntdException
+
+// Chunks
+PutResult chunkPut(byte[] data) throws AntdException
+byte[] chunkGet(String address) throws AntdException
+
+// Files
+FilePutResult filePut(String path, PaymentMode paymentMode) throws AntdException
+void fileGet(String dataMap, String destPath) throws AntdException
+FilePutPublicResult filePutPublic(String path, PaymentMode paymentMode) throws AntdException
+void fileGetPublic(String address, String destPath) throws AntdException
+UploadCostEstimate fileCost(String path, boolean isPublic, PaymentMode paymentMode) throws AntdException
+
+// Wallet
+WalletAddress walletAddress() throws AntdException
+WalletBalance walletBalance() throws AntdException
+boolean walletApprove() throws AntdException
+
+// AntdClient implements AutoCloseable — use try-with-resources
+```
+
+---
+
+## Rust SDK Method Signatures
+
+```rust
+// cargo add antd-client
+use antd_client::{Client, PutResult, HealthStatus, AntdError};
+
+let client = Client::new("http://localhost:8082");        // REST, localhost:8082
+
+// Health
+async fn health(&self) -> Result<HealthStatus, AntdError>
+
+// Data
+async fn data_put_public(&self, data: &[u8], payment_mode: PaymentMode) -> Result<DataPutPublicResult, AntdError>
+async fn data_get_public(&self, address: &str) -> Result<Vec<u8>, AntdError>
+async fn data_put(&self, data: &[u8], payment_mode: PaymentMode) -> Result<DataPutResult, AntdError>
+async fn data_get(&self, data_map: &str) -> Result<Vec<u8>, AntdError>
+async fn data_cost(&self, data: &[u8], payment_mode: PaymentMode) -> Result<UploadCostEstimate, AntdError>
+
+// Chunks
+async fn chunk_put(&self, data: &[u8]) -> Result<PutResult, AntdError>
+async fn chunk_get(&self, address: &str) -> Result<Vec<u8>, AntdError>
+
+// Files
+async fn file_put(&self, path: &str, payment_mode: PaymentMode) -> Result<FilePutResult, AntdError>
+async fn file_get(&self, data_map: &str, dest_path: &str) -> Result<(), AntdError>
+async fn file_put_public(&self, path: &str, payment_mode: PaymentMode) -> Result<FilePutPublicResult, AntdError>
+async fn file_get_public(&self, address: &str, dest_path: &str) -> Result<(), AntdError>
+async fn file_cost(&self, path: &str, is_public: bool, payment_mode: PaymentMode) -> Result<UploadCostEstimate, AntdError>
+
+// Wallet
+async fn wallet_address(&self) -> Result<WalletAddress, AntdError>
+async fn wallet_balance(&self) -> Result<WalletBalance, AntdError>
+async fn wallet_approve(&self) -> Result<bool, AntdError>
+
+// AntdError variants: BadRequest, Payment, NotFound, AlreadyExists, Fork, TooLarge, Internal, Network
+```
+
+---
+
+## C++ SDK Method Signatures
+
+```cpp
+// CMake FetchContent from GitHub
+#include <antd/antd.hpp>
+
+antd::Client client;                                      // REST, localhost:8082
+antd::Client client("http://remote:8082");
+
+// Health
+antd::HealthStatus health()                               // throws antd::AntdError
+
+// Data
+antd::DataPutPublicResult dataPutPublic(const std::vector<uint8_t>& data, antd::PaymentMode paymentMode = antd::PaymentMode::Auto)
+std::vector<uint8_t> dataGetPublic(const std::string& address)
+antd::DataPutResult dataPut(const std::vector<uint8_t>& data, antd::PaymentMode paymentMode = antd::PaymentMode::Auto)
+std::vector<uint8_t> dataGet(const std::string& dataMap)
+UploadCostEstimate dataCost(const std::vector<uint8_t>& data, antd::PaymentMode paymentMode = antd::PaymentMode::Auto)
+
+// Chunks
+antd::PutResult chunkPut(const std::vector<uint8_t>& data)
+std::vector<uint8_t> chunkGet(const std::string& address)
+
+// Files
+antd::FilePutResult filePut(const std::string& path, antd::PaymentMode paymentMode = antd::PaymentMode::Auto)
+void fileGet(const std::string& dataMap, const std::string& destPath)
+antd::FilePutPublicResult filePutPublic(const std::string& path, antd::PaymentMode paymentMode = antd::PaymentMode::Auto)
+void fileGetPublic(const std::string& address, const std::string& destPath)
+UploadCostEstimate fileCost(const std::string& path, bool isPublic = true, antd::PaymentMode paymentMode = antd::PaymentMode::Auto)
+
+// Wallet
+antd::WalletAddress walletAddress()
+antd::WalletBalance walletBalance()
+bool walletApprove()
+
+// All methods throw antd::AntdError or subclasses: BadRequestError, PaymentError, NotFoundError,
+// AlreadyExistsError, ForkError, TooLargeError, InternalError, NetworkError
+```
+
+---
+
+## Ruby SDK Method Signatures
+
+```ruby
+require "antd"
+
+client = Antd::Client.new                            # localhost:8082
+client = Antd::Client.new(base_url: "http://remote:8082")
+
+# Health
+client.health → HealthStatus
+
+# Data
+client.data_put_public(data, payment_mode: :auto) → DataPutPublicResult
+client.data_get_public(address) → String
+client.data_put(data, payment_mode: :auto) → DataPutResult
+client.data_get(data_map) → String
+client.data_cost(data, payment_mode: :auto) → UploadCostEstimate
+
+# Chunks
+client.chunk_put(data) → PutResult
+client.chunk_get(address) → String
+
+# Files
+client.file_put(path, payment_mode: :auto) → FilePutResult
+client.file_get(data_map, dest_path) → nil
+client.file_put_public(path, payment_mode: :auto) → FilePutPublicResult
+client.file_get_public(address, dest_path) → nil
+client.file_cost(path, is_public: true, payment_mode: :auto) → UploadCostEstimate
+
+# Wallet
+client.wallet_address → WalletAddress
+client.wallet_balance → WalletBalance
+client.wallet_approve → Boolean
+```
+
+---
+
+## PHP SDK Method Signatures
+
+```php
+use Autonomi\AntdClient;
+
+$client = AntdClient::create();                      // localhost:8082
+$client = AntdClient::create("http://remote:8082");
+
+// Health
+$client->health(): HealthStatus
+
+// Data
+$client->dataPutPublic(string $data, string $paymentMode = 'auto'): DataPutPublicResult
+$client->dataGetPublic(string $address): string
+$client->dataPut(string $data, string $paymentMode = 'auto'): DataPutResult
+$client->dataGet(string $dataMap): string
+$client->dataCost(string $data, string $paymentMode = 'auto'): UploadCostEstimate
+
+// Chunks
+$client->chunkPut(string $data): PutResult
+$client->chunkGet(string $address): string
+
+// Files
+$client->filePut(string $path, string $paymentMode = 'auto'): FilePutResult
+$client->fileGet(string $dataMap, string $destPath): void
+$client->filePutPublic(string $path, string $paymentMode = 'auto'): FilePutPublicResult
+$client->fileGetPublic(string $address, string $destPath): void
+$client->fileCost(string $path, bool $isPublic = true, string $paymentMode = 'auto'): UploadCostEstimate
+
+// Wallet
+$client->walletAddress(): array{address: string}
+$client->walletBalance(): array{balance: string, gas_balance: string}
+$client->walletApprove(): bool
+```
+
+---
+
+## Dart SDK Method Signatures
+
+```dart
+import 'package:antd/antd.dart';
+
+final client = AntdClient();                         // localhost:8082
+final client = AntdClient(baseUrl: 'http://remote:8082');
+
+// Health
+Future<HealthStatus> health()
+
+// Data
+Future<DataPutPublicResult> dataPutPublic(List<int> data, {PaymentMode paymentMode = PaymentMode.auto})
+Future<List<int>> dataGetPublic(String address)
+Future<DataPutResult> dataPut(List<int> data, {PaymentMode paymentMode = PaymentMode.auto})
+Future<List<int>> dataGet(String dataMap)
+Future<UploadCostEstimate> dataCost(List<int> data, {PaymentMode paymentMode = PaymentMode.auto})
+
+// Chunks
+Future<PutResult> chunkPut(List<int> data)
+Future<List<int>> chunkGet(String address)
+
+// Files
+Future<FilePutResult> filePut(String path, {PaymentMode paymentMode = PaymentMode.auto})
+Future<void> fileGet(String dataMap, String destPath)
+Future<FilePutPublicResult> filePutPublic(String path, {PaymentMode paymentMode = PaymentMode.auto})
+Future<void> fileGetPublic(String address, String destPath)
+Future<UploadCostEstimate> fileCost(String path, {bool isPublic = true, PaymentMode paymentMode = PaymentMode.auto})
+
+// Wallet
+Future<WalletAddress> walletAddress()
+Future<WalletBalance> walletBalance()
+Future<bool> walletApprove()
+```
+
+---
+
+## Lua SDK Method Signatures
+
+```lua
+local antd = require("antd")
+
+local client = antd.Client.new()                     -- localhost:8082
+local client = antd.Client.new({base_url = "http://remote:8082"})
+
+-- Health
+client:health() → HealthStatus
+
+-- Data
+client:data_put_public(data, payment_mode) → DataPutPublicResult (table)
+client:data_get_public(address) → string
+client:data_put(data, payment_mode) → DataPutResult (table)
+client:data_get(data_map) → string
+client:data_cost(data, payment_mode) → UploadCostEstimate (table)
+
+-- Chunks
+client:chunk_put(data) → PutResult
+client:chunk_get(address) → string
+
+-- Files
+client:file_put(path, payment_mode) → FilePutResult (table)
+client:file_get(data_map, dest_path) → nil
+client:file_put_public(path, payment_mode) → FilePutPublicResult (table)
+client:file_get_public(address, dest_path) → nil
+client:file_cost(path, is_public, payment_mode) → UploadCostEstimate (table)
+
+-- Wallet
+client:wallet_address() → {address=string}
+client:wallet_balance() → {balance=string, gas_balance=string}
+client:wallet_approve() → boolean
+```
+
+---
+
+## Elixir SDK Method Signatures
+
+```elixir
+client = Antd.Client.new()                           # localhost:8082
+client = Antd.Client.new(base_url: "http://remote:8082")
+
+# Health
+Antd.Client.health(client) :: {:ok, HealthStatus.t()} | {:error, term()}
+
+# Data
+Antd.Client.data_put_public(client, data, opts \\ []) :: {:ok, DataPutPublicResult.t()} | {:error, term()}  # opts: [payment_mode: :auto | :merkle | :single]
+Antd.Client.data_get_public(client, address) :: {:ok, binary()} | {:error, term()}
+Antd.Client.data_put(client, data, opts \\ []) :: {:ok, DataPutResult.t()} | {:error, term()}
+Antd.Client.data_get(client, data_map) :: {:ok, binary()} | {:error, term()}
+Antd.Client.data_cost(client, data, opts \\ []) :: {:ok, Antd.UploadCostEstimate.t()} | {:error, term()}
+
+# Chunks
+Antd.Client.chunk_put(client, data) :: {:ok, PutResult.t()} | {:error, term()}
+Antd.Client.chunk_get(client, address) :: {:ok, binary()} | {:error, term()}
+
+# Files
+Antd.Client.file_put(client, path, opts \\ []) :: {:ok, FilePutResult.t()} | {:error, term()}
+Antd.Client.file_get(client, data_map, dest_path) :: :ok | {:error, term()}
+Antd.Client.file_put_public(client, path, opts \\ []) :: {:ok, FilePutPublicResult.t()} | {:error, term()}
+Antd.Client.file_get_public(client, address, dest_path) :: :ok | {:error, term()}
+Antd.Client.file_cost(client, path, is_public \\ true, opts \\ []) :: {:ok, Antd.UploadCostEstimate.t()} | {:error, term()}
+
+# Wallet
+Antd.Client.wallet_address(client) :: {:ok, WalletAddress.t()} | {:error, term()}
+Antd.Client.wallet_balance(client) :: {:ok, WalletBalance.t()} | {:error, term()}
+Antd.Client.wallet_approve(client) :: {:ok, boolean()} | {:error, term()}
+```
+
+---
+
+## Zig SDK Method Signatures
+
+```zig
+const antd = @import("antd");
+
+var client = try antd.Client.init(.{});              // localhost:8082
+var client = try antd.Client.init(.{ .base_url = "http://remote:8082" });
+defer client.deinit();
+
+// Health
+fn health(self: *Client) !HealthStatus
+
+// Data
+fn dataPutPublic(self: *Client, data: []const u8, payment_mode: PaymentMode) !DataPutPublicResult
+fn dataGetPublic(self: *Client, address: []const u8) ![]u8
+fn dataPut(self: *Client, data: []const u8, payment_mode: PaymentMode) !DataPutResult
+fn dataGet(self: *Client, data_map: []const u8) ![]u8
+fn dataCost(self: *Client, data: []const u8, payment_mode: PaymentMode) !UploadCostEstimate
+
+// Chunks
+fn chunkPut(self: *Client, data: []const u8) !PutResult
+fn chunkGet(self: *Client, address: []const u8) ![]u8
+
+// Files
+fn filePut(self: *Client, path: []const u8, payment_mode: PaymentMode) !FilePutResult
+fn fileGet(self: *Client, data_map: []const u8, dest_path: []const u8) !void
+fn filePutPublic(self: *Client, path: []const u8, payment_mode: PaymentMode) !FilePutPublicResult
+fn fileGetPublic(self: *Client, address: []const u8, dest_path: []const u8) !void
+fn fileCost(self: *Client, path: []const u8, is_public: bool, payment_mode: PaymentMode) !UploadCostEstimate
+
+// Wallet
+fn walletAddress(self: *Client) !WalletAddress
+fn walletBalance(self: *Client) !WalletBalance
+fn walletApprove(self: *Client) !bool
+```
+
+---
+
+## External Signer SDK Methods
+
+Every SDK exposes a two-phase external-signer flow that lets the caller pay on-chain themselves (via wallet, hardware key, or custodial signer) instead of antd paying from its built-in wallet. The flow is always `prepare → external sign+pay → finalize`.
+
+| SDK method | Prepares for | REST route | Wave-batch finalize | Merkle finalize |
+|------------|--------------|------------|---------------------|-----------------|
+| `prepare_data_upload(data, visibility?)` | private/public data put | `POST /v1/data/prepare` | `finalize_upload(id, tx_hashes)` | `finalize_merkle_upload(id, winner_pool_hash)` |
+| `prepare_upload(path, visibility?)` | private file put | `POST /v1/upload/prepare` | `finalize_upload` | `finalize_merkle_upload` |
+| `prepare_upload_public(path)` | public file put (DataMap stored on-network at finalize) | `POST /v1/upload/prepare` (visibility = "public") | `finalize_upload` | `finalize_merkle_upload` |
+| `prepare_chunk_upload(data)` | single-chunk publish (no self-encryption) | `POST /v1/chunks/prepare` | `finalize_chunk_upload(id, tx_hashes)` | n/a — single chunks never trigger merkle |
+
+Reference signatures (Python; same method names exist on every SDK with idiomatic casing — `prepareUpload` / `PrepareUpload` etc.):
+
+```python
+client.prepare_data_upload(data: bytes, visibility: str | None = None) → PrepareUploadResult
+client.prepare_upload(path: str, visibility: str | None = None) → PrepareUploadResult
+client.prepare_upload_public(path: str) → PrepareUploadResult
+client.prepare_chunk_upload(data: bytes) → PrepareChunkResult
+client.finalize_upload(upload_id: str, tx_hashes: dict[str, str]) → FinalizeUploadResult
+client.finalize_merkle_upload(upload_id: str, winner_pool_hash: str, store_data_map: bool = False) → FinalizeUploadResult
+client.finalize_chunk_upload(upload_id: str, tx_hashes: dict[str, str]) → str  # returns the chunk address
+```
+
+`PrepareUploadResult` and `PrepareChunkResult` both carry the `payment_type` discriminator the REST endpoints emit (`"wave_batch"` or `"merkle"`); SDKs surface it directly so the caller can branch on which finalize to call. For full payment-shape detail see the `/v1/data/prepare`, `/v1/upload/prepare`, and `/v1/chunks/prepare` REST entries above. `PrepareChunkResult` additionally exposes `already_stored: bool` for the no-payment-needed path.
+
+All 15 SDKs expose these methods (REST-only SDKs included — they call the same endpoints).
+
+---
+
+## MCP Tool → SDK Method Mapping
+
+Every tool with a `private` flag (`store_data`, `retrieve_data`, `upload_file`, `download_file`) picks the public method by default and switches to the private variant when `private=True`. The returned `address` carries either the on-network address (public) or the caller-held DataMap (private) — same field, different shape, so agents can round-trip the value back through the matching retrieve/download tool without renaming fields.
+
+| MCP Tool | Python SDK Method | Description |
+|----------|-------------------|-------------|
+| `store_data(text, private?, payment_mode?)` | `data_put_public` / `data_put` | Store text on the network. Private store returns the caller-held DataMap in `address`. |
+| `retrieve_data(address, private?)` | `data_get_public` / `data_get` | Retrieve text. Pass `private=True` if `address` is a caller-held DataMap from a private store. |
+| `upload_file(path, private?, payment_mode?)` | `file_put_public` / `file_put` | Upload a local file. Private upload returns the caller-held DataMap in `address`. |
+| `download_file(address, dest_path, private?)` | `file_get_public` / `file_get` | Download a file. Pass `private=True` if `address` is a caller-held DataMap from a private upload. |
+| `chunk_put` | `chunk_put` | Store raw chunk |
+| `chunk_get` | `chunk_get` | Retrieve raw chunk |
+| `get_cost(text?, file_path?, payment_mode?)` | `data_cost` / `file_cost` | Estimate storage cost. `payment_mode` flows through so the quote matches the eventual put. |
+| `check_balance` | `health` | Check daemon health |
+| `wallet_address` | `wallet_address` | Get wallet public address |
+| `wallet_balance` | `wallet_balance` | Get wallet balances |
+| `wallet_approve` | `wallet_approve` | Approve wallet for payments |
+
+---
+
+## Error Codes
+
+| HTTP | gRPC Status | JS/TS Error | Python Exception | C# Exception | Kotlin Exception | Swift Error | Java Exception | Rust Variant | C++ Error | Meaning |
+|------|-------------|-------------|------------------|--------------|------------------|-------------|----------------|--------------|-----------|---------|
+| 400 | INVALID_ARGUMENT | `BadRequestError` | `BadRequestError` | `BadRequestException` | `BadRequestException` | `BadRequestError` | `BadRequestException` | `AntdError::BadRequest` | `BadRequestError` | Malformed request |
+| 402 | FAILED_PRECONDITION | `PaymentError` | `PaymentError` | `PaymentException` | `PaymentException` | `PaymentError` | `PaymentException` | `AntdError::Payment` | `PaymentError` | Insufficient wallet funds |
+| 404 | NOT_FOUND | `NotFoundError` | `NotFoundError` | `NotFoundException` | `NotFoundException` | `NotFoundError` | `NotFoundException` | `AntdError::NotFound` | `NotFoundError` | Address not found on network |
+| 409 | ALREADY_EXISTS | `AlreadyExistsError` | `AlreadyExistsError` | `AlreadyExistsException` | `AlreadyExistsException` | `AlreadyExistsError` | `AlreadyExistsException` | `AntdError::AlreadyExists` | `AlreadyExistsError` | Resource already exists |
+| 409 | ABORTED | `ForkError` | `ForkError` | `ForkException` | `ForkException` | `ForkError` | `ForkException` | `AntdError::Fork` | `ForkError` | Version conflict / fork |
+| 413 | RESOURCE_EXHAUSTED | `TooLargeError` | `TooLargeError` | `TooLargeException` | `TooLargeException` | `TooLargeError` | `TooLargeException` | `AntdError::TooLarge` | `TooLargeError` | Data exceeds size limit |
+| 500 | INTERNAL | `InternalError` | `InternalError` | `InternalException` | `InternalException` | `InternalError` | `InternalException` | `AntdError::Internal` | `InternalError` | Internal server error |
+| 502 | UNAVAILABLE | `NetworkError` | `NetworkError` | `NetworkException` | `NetworkException` | `NetworkError` | `NetworkException` | `AntdError::Network` | `NetworkError` | Cannot reach network |
+| 503 | UNAVAILABLE | `ServiceUnavailableError` | `ServiceUnavailableError` | `ServiceUnavailableException` | `ServiceUnavailableException` | `ServiceUnavailableError` | `ServiceUnavailableException` | `AntdError::ServiceUnavailable` | `ServiceUnavailableError` | Wallet not configured |
+
+All exceptions inherit from `AntdError` (JS/TS, Python, Swift, Ruby, Lua, Zig, C++) / `AntdException` (C#, Kotlin, Java, PHP, Dart, Elixir uses `{:error, reason}` tuples). Rust uses `Result<T, AntdError>` with `match` on enum variants.
+
+---
+
+## Runnable Examples
+
+### Store and Retrieve Public Data (Python)
+
+```python
+from antd import AntdClient
+
+client = AntdClient()
+result = client.data_put_public(b"Hello, Autonomi!")
+print(f"Stored at: {result.address}, cost: {result.cost}")
+
+data = client.data_get_public(result.address)
+print(f"Retrieved: {data.decode()}")
+```
+
+### Store and Retrieve Public Data (Kotlin)
+
+```kotlin
+import com.autonomi.sdk.*
+import kotlinx.coroutines.runBlocking
+
+fun main() = runBlocking {
+    val client = AntdClient.createRest()
+    val result = client.dataPutPublic("Hello, Autonomi!".toByteArray())
+    println("Stored at: ${result.address}, cost: ${result.cost}")
+
+    val data = client.dataGetPublic(result.address)
+    println("Retrieved: ${String(data)}")
+    client.close()
+}
+```
+
+### Store and Retrieve Public Data (Swift)
+
+```swift
+import AntdSdk
+
+let client = try AntdClient.createRest()
+let result = try await client.dataPutPublic("Hello, Autonomi!".data(using: .utf8)!)
+print("Stored at: \(result.address), cost: \(result.cost)")
+
+let data = try await client.dataGetPublic(address: result.address)
+print("Retrieved: \(String(data: data, encoding: .utf8)!)")
+```
+
+### Store and Retrieve Public Data (Go)
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+
+    antd "github.com/WithAutonomi/ant-sdk/antd-go"
+)
+
+func main() {
+    client := antd.NewClient(antd.DefaultBaseURL)
+    ctx := context.Background()
+
+    result, err := client.DataPutPublic(ctx, []byte("Hello, Autonomi!"))
+    if err != nil { log.Fatal(err) }
+    fmt.Printf("Stored at: %s, cost: %s\n", result.Address, result.Cost)
+
+    data, err := client.DataGetPublic(ctx, result.Address)
+    if err != nil { log.Fatal(err) }
+    fmt.Printf("Retrieved: %s\n", string(data))
+}
+```
+
+### Store and Retrieve Public Data (Java)
+
+```java
+import com.autonomi.antd.AntdClient;
+import com.autonomi.antd.PutResult;
+
+public class Main {
+    public static void main(String[] args) throws Exception {
+        try (AntdClient client = AntdClient.create()) {
+            PutResult result = client.dataPutPublic("Hello, Autonomi!".getBytes());
+            System.out.printf("Stored at: %s, cost: %s%n", result.address(), result.cost());
+
+            byte[] data = client.dataGetPublic(result.address());
+            System.out.printf("Retrieved: %s%n", new String(data));
+        }
+    }
+}
+```
+
+### Store and Retrieve Public Data (Rust)
+
+```rust
+use antd_client::Client;
+
+#[tokio::main]
+async fn main() -> Result<(), antd_client::AntdError> {
+    let client = Client::new("http://localhost:8082");
+
+    let result = client.data_put_public(b"Hello, Autonomi!").await?;
+    println!("Stored at: {}, cost: {}", result.address, result.cost);
+
+    let data = client.data_get_public(&result.address).await?;
+    println!("Retrieved: {}", String::from_utf8_lossy(&data));
+    Ok(())
+}
+```
+
+### Store and Retrieve Public Data (C++)
+
+```cpp
+#include <antd/antd.hpp>
+#include <iostream>
+#include <string>
+
+int main() {
+    try {
+        antd::Client client;
+        std::string payload = "Hello, Autonomi!";
+        std::vector<uint8_t> data(payload.begin(), payload.end());
+
+        auto result = client.dataPutPublic(data);
+        std::cout << "Stored at: " << result.address << ", cost: " << result.cost << std::endl;
+
+        auto retrieved = client.dataGetPublic(result.address);
+        std::cout << "Retrieved: " << std::string(retrieved.begin(), retrieved.end()) << std::endl;
+    } catch (const antd::AntdError& e) {
+        std::cerr << "Error: " << e.what() << std::endl;
+        return 1;
+    }
+    return 0;
+}
+```
+
+### Store and Retrieve Public Data (Ruby)
+
+```ruby
+require "antd"
+
+client = Antd::Client.new
+result = client.data_put_public("Hello, Autonomi!")
+puts "Stored at: #{result.address}, cost: #{result.cost}"
+
+data = client.data_get_public(result.address)
+puts "Retrieved: #{data}"
+```
+
+### Store and Retrieve Public Data (PHP)
+
+```php
+<?php
+use Autonomi\AntdClient;
+
+$client = AntdClient::create();
+$result = $client->dataPutPublic("Hello, Autonomi!");
+echo "Stored at: {$result->address}, cost: {$result->cost}\n";
+
+$data = $client->dataGetPublic($result->address);
+echo "Retrieved: {$data}\n";
+```
+
+### Store and Retrieve Public Data (Dart)
+
+```dart
+import 'package:antd/antd.dart';
+
+void main() async {
+  final client = AntdClient();
+  final result = await client.dataPutPublic('Hello, Autonomi!'.codeUnits);
+  print('Stored at: ${result.address}, cost: ${result.cost}');
+
+  final data = await client.dataGetPublic(result.address);
+  print('Retrieved: ${String.fromCharCodes(data)}');
+}
+```
+
+### Store and Retrieve Public Data (Lua)
+
+```lua
+local antd = require("antd")
+
+local client = antd.Client.new()
+local result = client:data_put_public("Hello, Autonomi!")
+print("Stored at: " .. result.address .. ", cost: " .. result.cost)
+
+local data = client:data_get_public(result.address)
+print("Retrieved: " .. data)
+```
+
+### Store and Retrieve Public Data (Elixir)
+
+```elixir
+client = Antd.Client.new()
+
+{:ok, result} = Antd.Client.data_put_public(client, "Hello, Autonomi!")
+IO.puts("Stored at: #{result.address}, cost: #{result.cost}")
+
+{:ok, data} = Antd.Client.data_get_public(client, result.address)
+IO.puts("Retrieved: #{data}")
+```
+
+### Store and Retrieve Public Data (Zig)
+
+```zig
+const std = @import("std");
+const antd = @import("antd");
+
+pub fn main() !void {
+    var client = try antd.Client.init(.{});
+    defer client.deinit();
+
+    const result = try client.dataPutPublic("Hello, Autonomi!");
+    std.debug.print("Stored at: {s}, cost: {s}\n", .{ result.address, result.cost });
+
+    const data = try client.dataGetPublic(result.address);
+    std.debug.print("Retrieved: {s}\n", .{data});
+}
+```
+
+### Private Data Round-Trip (Python)
+
+```python
+from antd import AntdClient
+
+client = AntdClient()
+
+# Store private (encrypted) data
+result = client.data_put_private(b"secret message")
+print(f"Data map: {result.address}")
+
+# Retrieve with data map
+data = client.data_get_private(result.address)
+print(f"Decrypted: {data.decode()}")
+```

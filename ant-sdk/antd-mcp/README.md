@@ -1,0 +1,131 @@
+# antd-mcp — MCP Server for Autonomi
+
+An [MCP (Model Context Protocol)](https://modelcontextprotocol.io) server that exposes the Autonomi network as 19 tools for AI agents. Works with Claude Desktop, Claude Code, and any MCP-compatible client.
+
+## Installation
+
+```bash
+pip install -e antd-mcp/
+```
+
+Requires the `antd` Python SDK (`pip install antd[rest]`).
+
+## Running
+
+```bash
+# stdio transport (default — for Claude Desktop)
+antd-mcp
+
+# SSE transport (for web-based clients)
+antd-mcp --sse
+```
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ANTD_BASE_URL` | auto-discovered | antd daemon URL (overrides port-file discovery) |
+
+The MCP server automatically discovers the antd daemon via the `daemon.port` file written by antd on startup. Set `ANTD_BASE_URL` only if you need to override this (e.g. connecting to a remote daemon). If neither the env var nor port file is available, falls back to `http://127.0.0.1:8082`.
+
+## Claude Desktop Configuration
+
+Add to your Claude Desktop config (`claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "antd-autonomi": {
+      "command": "antd-mcp"
+    }
+  }
+}
+```
+
+The server will auto-discover the daemon via the port file. Add `"env": {"ANTD_BASE_URL": "http://your-host:port"}` only if you need to override discovery.
+
+## Tool Reference
+
+### Data Operations
+
+| # | Tool | Description |
+|---|------|-------------|
+| 1 | `store_data(text, private?, payment_mode?)` | Store text on the network. With `private=True`, the returned `address` is the caller-held DataMap (not stored on-network — keep it safe). |
+| 2 | `retrieve_data(address, private?)` | Retrieve text by address. Pass `private=True` if `address` is a caller-held DataMap from a private store. |
+| 3 | `upload_file(path, private?, payment_mode?)` | Upload a local file. With `private=True`, the returned `address` is the caller-held DataMap. |
+| 4 | `download_file(address, dest_path, private?)` | Download to local path — the **daemon** writes the file (daemon and MCP server must share a filesystem). Pass `private=True` if `address` is a caller-held DataMap from a private upload. |
+| 5 | `stream_download_file(address, dest_path, private?)` | Like `download_file`, but streams the bytes back to the MCP server process and writes `dest_path` on **this** host with constant memory (suits large objects / no shared filesystem). Returns `bytes_written`. |
+| 6 | `get_cost(text?, file_path?, payment_mode?)` | Estimate storage cost — returns `cost`, `file_size`, `chunk_count`, `estimated_gas_cost_wei`, `payment_mode` |
+| 7 | `check_balance()` | Check daemon health and network status |
+
+### Wallet Operations
+
+| # | Tool | Description |
+|---|------|-------------|
+| 8 | `wallet_address()` | Get wallet public address |
+| 9 | `wallet_balance()` | Get wallet token and gas balances |
+| 10 | `wallet_approve()` | Approve wallet to spend tokens on payment contracts (one-time) |
+
+### Chunk Operations
+
+| # | Tool | Description |
+|---|------|-------------|
+| 11 | `chunk_put(data)` | Store a raw chunk (base64 input) |
+| 12 | `chunk_get(address)` | Retrieve a chunk (base64 output) |
+
+### External Signer (Two-Phase Upload)
+
+| # | Tool | Description |
+|---|------|-------------|
+| 13 | `prepare_upload(path, visibility?)` | Prepare a file upload for external signing. Pass `visibility="public"` to bundle the DataMap chunk into the same payment batch (the `data_map_address` on finalize is the shareable retrieval handle). |
+| 14 | `prepare_upload_public(path)` | Convenience wrapper for `prepare_upload(path, visibility="public")`. |
+| 15 | `prepare_data_upload(text)` | Prepare a data upload for external signing |
+| 16 | `finalize_upload(upload_id, tx_hashes)` | Finalize a wave-batch upload. Returns `address`, `chunks_stored`, `data_map`, and (for public uploads) `data_map_address`. |
+| 17 | `finalize_merkle_upload(upload_id, winner_pool_hash)` | Finalize a merkle-batch upload. Returns the same fields as `finalize_upload`. |
+| 18 | `prepare_chunk_upload(data_base64)` | Prepare a single raw chunk for external-signer publish. Returns either `already_stored=True` (no payment needed) or a wave-batch payment intent. |
+| 19 | `finalize_chunk_upload(upload_id, tx_hashes)` | Submit a prepared chunk to the network after external payment. Returns `address`. |
+
+### Payment Modes
+
+The `store_data`, `upload_file`, and `get_cost` tools accept an optional `payment_mode` parameter:
+
+| Mode | Behavior |
+|------|----------|
+| `"auto"` (default) | Uses merkle batch payments for 64+ chunks, single payments otherwise. Recommended for most use cases. |
+| `"merkle"` | Forces merkle batch payments regardless of chunk count (minimum 2 chunks). Saves gas on larger uploads. |
+| `"single"` | Forces per-chunk payments. Useful for small data or debugging. |
+
+## Response Format
+
+All tools return JSON with a `network` field indicating the connected network:
+
+```json
+{
+  "address": "abc123...",
+  "cost": "1000000",
+  "network": "local"
+}
+```
+
+Errors return structured error objects:
+
+```json
+{
+  "error": "NOT_FOUND",
+  "message": "Resource not found",
+  "status_code": 404,
+  "network": "local"
+}
+```
+
+## Project Structure
+
+```
+antd-mcp/
+├── pyproject.toml
+└── src/antd_mcp/
+    ├── __init__.py
+    ├── server.py      # 19 MCP tool definitions
+    ├── discover.py    # Daemon port-file discovery
+    └── errors.py      # Error formatting
+```

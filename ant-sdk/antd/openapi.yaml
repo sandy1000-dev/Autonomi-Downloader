@@ -1,0 +1,1193 @@
+openapi: 3.1.0
+info:
+  title: antd REST API
+  description: REST API for the antd daemon — gateway to the Autonomi network.
+  version: 2.0.0
+
+servers:
+  - url: http://localhost:8082
+    description: Local antd daemon
+
+tags:
+  - name: health
+    description: Daemon health checks
+  - name: data
+    description: Public and private data storage
+  - name: chunks
+    description: Raw chunk operations
+  - name: files
+    description: File and directory upload/download
+  - name: wallet
+    description: Wallet balance, address, and token approval
+  - name: upload
+    description: Two-phase upload for external signers
+
+paths:
+  /health:
+    get:
+      tags: [health]
+      operationId: health
+      summary: Health check
+      description: Returns daemon status and network name.
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /v1/data/public/{addr}:
+    get:
+      tags: [data]
+      operationId: dataGetPublic
+      summary: Get public data
+      description: Retrieve public (unencrypted) data by its hex address.
+      parameters:
+        - name: addr
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Hex address of the data
+      responses:
+        "200":
+          description: Data retrieved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataGetResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/data/public/{addr}/stream:
+    get:
+      tags: [data]
+      operationId: dataStreamPublic
+      summary: Stream public data
+      description: Stream public data as a chunked response.
+      parameters:
+        - name: addr
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Hex address of the data
+      responses:
+        "200":
+          description: Chunked data stream
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/data/public:
+    post:
+      tags: [data]
+      operationId: dataPutPublic
+      summary: Store public data
+      description: Store public (unencrypted) data on the network.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DataPutRequest"
+      responses:
+        "200":
+          description: Data stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataPutPublicResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "402":
+          $ref: "#/components/responses/PaymentError"
+        "413":
+          $ref: "#/components/responses/TooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "502":
+          $ref: "#/components/responses/NetworkError"
+
+  /v1/data:
+    post:
+      tags: [data]
+      operationId: dataPut
+      summary: Store private data
+      description: >-
+        Store private (encrypted) data on the network. Returns the serialized
+        DataMap to the caller; the DataMap is NOT stored on the network.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DataPutRequest"
+      responses:
+        "200":
+          description: Data stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataPutResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "402":
+          $ref: "#/components/responses/PaymentError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "502":
+          $ref: "#/components/responses/NetworkError"
+
+  /v1/data/get:
+    post:
+      tags: [data]
+      operationId: dataGet
+      summary: Get private data
+      description: >-
+        Retrieve private data using a caller-held DataMap. Uses POST so the
+        hex-encoded DataMap (which can be many KB) goes in the request body
+        rather than a URL query string.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DataGetRequest"
+      responses:
+        "200":
+          description: Data retrieved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataGetResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/data/cost:
+    post:
+      tags: [data]
+      operationId: dataCost
+      summary: Estimate data storage cost
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DataCostRequest"
+      responses:
+        "200":
+          description: Cost estimate
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CostResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "502":
+          $ref: "#/components/responses/NetworkError"
+
+  /v1/chunks/{addr}:
+    get:
+      tags: [chunks]
+      operationId: chunkGet
+      summary: Get chunk
+      description: Retrieve a raw chunk by hex address.
+      parameters:
+        - name: addr
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Hex address of the chunk
+      responses:
+        "200":
+          description: Chunk data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChunkGetResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/chunks:
+    post:
+      tags: [chunks]
+      operationId: chunkPut
+      summary: Store chunk
+      description: Store a raw chunk on the network.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChunkPutRequest"
+      responses:
+        "200":
+          description: Chunk stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChunkPutResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "402":
+          $ref: "#/components/responses/PaymentError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "502":
+          $ref: "#/components/responses/NetworkError"
+
+  /v1/chunks/prepare:
+    post:
+      tags: [chunks, upload]
+      operationId: prepareChunkUpload
+      summary: Prepare single-chunk upload for external signer
+      description: >-
+        Phase 1 of single-chunk external-signer publish. Stores the bytes
+        verbatim as one chunk at their BLAKE3 address (no self-encryption).
+        Quotes the close group and returns the wave-batch payment shape.
+        When the chunk is already on-network, returns already_stored:true
+        with the existing address and no upload_id — payment is unnecessary.
+        Unlike /v1/chunks, this endpoint does NOT require the daemon to have
+        a wallet; all funds flow through the external signer.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PrepareChunkRequest"
+      responses:
+        "200":
+          description: Chunk prepared (or already stored)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PrepareChunkResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/chunks/finalize:
+    post:
+      tags: [chunks, upload]
+      operationId: finalizeChunkUpload
+      summary: Finalize externally-signed single-chunk upload
+      description: >-
+        Phase 2 of single-chunk external-signer publish. Takes the upload_id
+        from /v1/chunks/prepare and the tx_hashes from the on-chain
+        payForQuotes() call, then publishes the chunk to the network.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FinalizeChunkRequest"
+      responses:
+        "200":
+          description: Chunk stored on the network
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinalizeChunkResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/files:
+    post:
+      tags: [files]
+      operationId: filePut
+      summary: Upload file (private)
+      description: >-
+        Upload a local file privately. Returns the serialized DataMap to the
+        caller; the DataMap is NOT stored on the network.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FilePutRequest"
+      responses:
+        "200":
+          description: File uploaded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FilePutResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "402":
+          $ref: "#/components/responses/PaymentError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "502":
+          $ref: "#/components/responses/NetworkError"
+
+  /v1/files/get:
+    post:
+      tags: [files]
+      operationId: fileGet
+      summary: Download private file
+      description: Download a file using a caller-held DataMap (no address lookup).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FileGetRequest"
+      responses:
+        "200":
+          description: File downloaded
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "502":
+          $ref: "#/components/responses/NetworkError"
+
+  /v1/files/public:
+    post:
+      tags: [files]
+      operationId: filePutPublic
+      summary: Upload file (public)
+      description: >-
+        Upload a local file publicly. Also stores the DataMap on-network as an
+        additional chunk (extra payment) and returns its chunk address.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FilePutRequest"
+      responses:
+        "200":
+          description: File uploaded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FilePutPublicResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "402":
+          $ref: "#/components/responses/PaymentError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "502":
+          $ref: "#/components/responses/NetworkError"
+
+  /v1/files/public/get:
+    post:
+      tags: [files]
+      operationId: fileGetPublic
+      summary: Download public file by address
+      description: Download a public file from the network using its on-network DataMap address.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FileGetPublicRequest"
+      responses:
+        "200":
+          description: File downloaded
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "502":
+          $ref: "#/components/responses/NetworkError"
+
+  /v1/files/cost:
+    post:
+      tags: [files]
+      operationId: fileCost
+      summary: Estimate file upload cost
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FileCostRequest"
+      responses:
+        "200":
+          description: Cost estimate
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CostResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "502":
+          $ref: "#/components/responses/NetworkError"
+
+  # ── Wallet ──
+
+  /v1/wallet/address:
+    get:
+      tags: [wallet]
+      operationId: walletAddress
+      summary: Get wallet address
+      description: Return the public address of the daemon's configured wallet.
+      responses:
+        "200":
+          description: Wallet address
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WalletAddressResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /v1/wallet/balance:
+    get:
+      tags: [wallet]
+      operationId: walletBalance
+      summary: Get wallet balance
+      description: >-
+        Query the EVM chain for the wallet's current token and gas balances.
+        Token balance is in atto (1 token = 10^18 atto).
+        Gas balance is in wei.
+      responses:
+        "200":
+          description: Wallet balances
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WalletBalanceResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /v1/wallet/approve:
+    post:
+      tags: [wallet]
+      operationId: walletApprove
+      summary: Approve token spend
+      description: >-
+        Submit an ERC-20 approve transaction so the data-payments contract
+        can spend tokens on behalf of the wallet. Required before uploads
+        when using a fresh wallet.
+      responses:
+        "200":
+          description: Approval successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WalletApproveResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  # ── External Signer (two-phase upload) ──
+
+  /v1/data/prepare:
+    post:
+      tags: [upload]
+      operationId: prepareDataUpload
+      summary: Prepare data upload for external signer
+      description: >-
+        Phase 1 of two-phase upload for in-memory data. Encrypts and chunks
+        the data, collects storage quotes from the network, and returns a
+        payment intent. The caller signs and submits the EVM payment
+        transaction externally, then calls /v1/upload/finalize with the
+        transaction hashes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PrepareDataUploadRequest"
+      responses:
+        "200":
+          description: Upload prepared, payment intent returned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PrepareUploadResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          description: >-
+            visibility:"public" not yet supported on this endpoint —
+            blocked on upstream ant-client #73.
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /v1/upload/prepare:
+    post:
+      tags: [upload]
+      operationId: prepareFileUpload
+      summary: Prepare file upload for external signer
+      description: >-
+        Phase 1 of two-phase upload for a local file. Reads and encrypts
+        the file, collects storage quotes from the network, and returns
+        payment details. The response includes a payment_type discriminator
+        ("wave_batch" for < 64 chunks, "merkle" for >= 64 chunks) that
+        determines which contract call and finalize parameters to use.
+        For wave_batch, call payForQuotes() then finalize with tx_hashes.
+        For merkle, call payForMerkleTree() then finalize with winner_pool_hash.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PrepareUploadRequest"
+      responses:
+        "200":
+          description: Upload prepared, payment intent returned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PrepareUploadResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /v1/upload/finalize:
+    post:
+      tags: [upload]
+      operationId: finalizeUpload
+      summary: Finalize externally-signed upload
+      description: >-
+        Phase 2 of two-phase upload. Takes the upload_id from a prepare
+        call and either tx_hashes (wave_batch) or winner_pool_hash (merkle)
+        from the on-chain payment. The server detects the payment type
+        from the stored prepared upload and validates the request fields
+        accordingly. Optionally stores the DataMap on-network.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FinalizeUploadRequest"
+      responses:
+        "200":
+          description: Upload finalized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinalizeUploadResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+components:
+  schemas:
+    # -- Health --
+    HealthResponse:
+      type: object
+      required:
+        - status
+        - network
+        - version
+        - evm_network
+        - uptime_seconds
+        - build_commit
+        - payment_token_address
+        - payment_vault_address
+      properties:
+        status:
+          type: string
+          example: "ok"
+        network:
+          type: string
+          example: "local"
+          description: "Network name: default, local, or alpha"
+        version:
+          type: string
+          example: "0.4.0"
+          description: "antd crate version (CARGO_PKG_VERSION)"
+        evm_network:
+          type: string
+          example: "arbitrum-one"
+          description: "EVM preset: arbitrum-one, arbitrum-sepolia, local, or custom"
+        uptime_seconds:
+          type: integer
+          format: int64
+          minimum: 0
+          example: 12345
+          description: "Seconds since the daemon process started"
+        build_commit:
+          type: string
+          example: "1cbfb3ec85ad"
+          description: "Short git SHA captured at build time, or empty if unknown"
+        payment_token_address:
+          type: string
+          example: "0xde817De9d8AC8C3aA10C3Ed0EE5FCB6C53cE7B0a"
+          description: "Payment token contract address, or empty if unconfigured"
+        payment_vault_address:
+          type: string
+          example: "0x607483B50C5F06c25cDC316b6d1E071084EeC9f5"
+          description: "Payment vault contract address, or empty if unconfigured"
+
+    # -- Data --
+    DataPutRequest:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: string
+          description: Base64-encoded data
+        payment_mode:
+          type: string
+          enum: [auto, merkle, single]
+          default: auto
+          description: "Payment mode: auto (default), merkle, or single"
+
+    DataPutPublicResponse:
+      type: object
+      required: [address, chunks_stored, payment_mode_used]
+      properties:
+        address:
+          type: string
+          description: Hex address of stored data
+        chunks_stored:
+          type: integer
+          description: Number of chunks stored on the network
+        payment_mode_used:
+          type: string
+          enum: [auto, merkle, single]
+          description: Payment mode that was used
+
+    DataPutResponse:
+      type: object
+      required: [data_map, chunks_stored, payment_mode_used]
+      properties:
+        data_map:
+          type: string
+          description: Hex-encoded data map for retrieval
+        chunks_stored:
+          type: integer
+          description: Number of chunks stored on the network
+        payment_mode_used:
+          type: string
+          enum: [auto, merkle, single]
+          description: Payment mode that was used
+
+    DataGetRequest:
+      type: object
+      required: [data_map]
+      properties:
+        data_map:
+          type: string
+          description: Hex-encoded data map for retrieval
+
+    DataGetResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: string
+          description: Base64-encoded data
+
+    DataCostRequest:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: string
+          description: Base64-encoded data to estimate cost for
+        payment_mode:
+          type: string
+          enum: [auto, merkle, single]
+          default: auto
+          description: "Payment mode the estimate should reflect: auto (default), merkle, or single"
+
+    # -- Chunks --
+    ChunkPutRequest:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: string
+          description: Base64-encoded chunk data
+
+    ChunkPutResponse:
+      type: object
+      required: [cost, address]
+      properties:
+        cost:
+          type: string
+          description: Cost in atto tokens
+        address:
+          type: string
+          description: Hex address of the chunk
+
+    ChunkGetResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: string
+          description: Base64-encoded chunk data
+
+    PrepareChunkRequest:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: string
+          description: Base64-encoded chunk bytes (stored verbatim, no self-encryption)
+
+    PrepareChunkResponse:
+      type: object
+      required: [address, already_stored]
+      description: >-
+        Mirrors PrepareUploadResponse's wave-batch shape so external signers
+        can reuse the same payForQuotes() path. When already_stored is true,
+        no payment or finalize call is needed and the payment fields are
+        omitted.
+      properties:
+        address:
+          type: string
+          description: Content-addressed BLAKE3 of the chunk bytes (hex, 32 bytes)
+        already_stored:
+          type: boolean
+          description: True if the chunk was already on-network — no payment / finalize needed
+        upload_id:
+          type: string
+          description: Opaque token to pass back to /v1/chunks/finalize (omitted when already_stored)
+        payment_type:
+          type: string
+          enum: [wave_batch]
+          description: Always "wave_batch" for single-chunk publishes (omitted when already_stored)
+        payments:
+          type: array
+          items:
+            $ref: "#/components/schemas/PaymentEntry"
+          description: Per-quote payment entries for payForQuotes() (omitted when already_stored)
+        total_amount:
+          type: string
+          description: Total amount to pay (atto tokens as decimal string)
+        payment_vault_address:
+          type: string
+          description: Payment vault contract address (hex with 0x prefix)
+        payment_token_address:
+          type: string
+          description: Payment token contract address (hex with 0x prefix)
+        rpc_url:
+          type: string
+          description: EVM RPC URL for submitting transactions
+
+    FinalizeChunkRequest:
+      type: object
+      required: [upload_id, tx_hashes]
+      properties:
+        upload_id:
+          type: string
+          description: The upload_id returned from /v1/chunks/prepare
+        tx_hashes:
+          type: object
+          additionalProperties:
+            type: string
+          description: Map of quote_hash (hex) to tx_hash (hex) from the payForQuotes() on-chain payment
+
+    FinalizeChunkResponse:
+      type: object
+      required: [address]
+      properties:
+        address:
+          type: string
+          description: Network address of the stored chunk (hex, 32 bytes)
+
+    # -- Files --
+    FilePutRequest:
+      type: object
+      required: [path]
+      properties:
+        path:
+          type: string
+          description: Absolute path to local file or directory
+        payment_mode:
+          type: string
+          enum: [auto, merkle, single]
+          default: auto
+          description: "Payment mode: auto (default), merkle, or single"
+
+    FilePutPublicResponse:
+      type: object
+      required:
+        [address, storage_cost_atto, gas_cost_wei, chunks_stored, payment_mode_used]
+      properties:
+        address:
+          type: string
+        storage_cost_atto:
+          type: string
+          description: Total storage cost paid in token units (atto). "0" if all chunks already existed.
+        gas_cost_wei:
+          type: string
+          description: Total gas cost in wei as a decimal string (u128 exceeds JSON safe-integer range). "0" if no on-chain transactions were made.
+        chunks_stored:
+          type: integer
+          format: uint64
+          description: Number of chunks stored on the network.
+        payment_mode_used:
+          type: string
+          enum: [auto, merkle, single]
+          description: Which payment mode was actually used.
+
+    FilePutResponse:
+      type: object
+      required:
+        [data_map, storage_cost_atto, gas_cost_wei, chunks_stored, payment_mode_used]
+      properties:
+        data_map:
+          type: string
+          description: >-
+            Hex-encoded rmp_serde-serialized DataMap. The caller keeps this; it
+            is NOT stored on the network.
+        storage_cost_atto:
+          type: string
+          description: Total storage cost paid in token units (atto). "0" if all chunks already existed.
+        gas_cost_wei:
+          type: string
+          description: Total gas cost in wei as a decimal string. "0" if no on-chain transactions were made.
+        chunks_stored:
+          type: integer
+          format: uint64
+          description: Number of chunks stored on the network.
+        payment_mode_used:
+          type: string
+          enum: [auto, merkle, single]
+          description: Which payment mode was actually used.
+
+    FileGetPublicRequest:
+      type: object
+      required: [address, dest_path]
+      properties:
+        address:
+          type: string
+          description: Hex address of the on-network DataMap chunk
+        dest_path:
+          type: string
+          description: Absolute local path to save to
+
+    FileGetRequest:
+      type: object
+      required: [data_map, dest_path]
+      properties:
+        data_map:
+          type: string
+          description: Hex-encoded rmp_serde-serialized DataMap (caller-held)
+        dest_path:
+          type: string
+          description: Absolute local path to save to
+
+    FileCostRequest:
+      type: object
+      required: [path]
+      properties:
+        path:
+          type: string
+          description: Absolute path to local file
+        is_public:
+          type: boolean
+          default: true
+        payment_mode:
+          type: string
+          enum: [auto, merkle, single]
+          default: auto
+          description: "Payment mode the estimate should reflect: auto (default), merkle, or single"
+    # -- Wallet --
+    WalletAddressResponse:
+      type: object
+      required: [address]
+      properties:
+        address:
+          type: string
+          description: Wallet public address (hex with 0x prefix)
+          example: "0x1234abcd..."
+
+    WalletBalanceResponse:
+      type: object
+      required: [balance, gas_balance]
+      properties:
+        balance:
+          type: string
+          description: Token balance in atto (smallest unit)
+        gas_balance:
+          type: string
+          description: Gas token balance in wei
+
+    WalletApproveResponse:
+      type: object
+      required: [approved]
+      properties:
+        approved:
+          type: boolean
+          description: Whether the token spend was approved
+
+    # -- External Signer (two-phase upload) --
+    PrepareDataUploadRequest:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: string
+          description: Base64-encoded data to upload
+        visibility:
+          type: string
+          enum: [private, public]
+          description: >-
+            Upload visibility. "private" (default) returns the DataMap to
+            the caller. "public" is reserved — returns 501 until upstream
+            ant-core exposes data_prepare_upload_with_visibility (tracked
+            as ant-client PR #73). Use /v1/upload/prepare with a file path
+            today.
+
+    PrepareUploadRequest:
+      type: object
+      required: [path]
+      properties:
+        path:
+          type: string
+          description: Absolute path to local file
+        visibility:
+          type: string
+          enum: [private, public]
+          description: >-
+            Upload visibility. "private" (default) returns the DataMap to
+            the caller. "public" bundles the serialized DataMap chunk into
+            the same external-signer payment batch and surfaces its
+            network address on /v1/upload/finalize via data_map_address.
+            Omitting this field preserves pre-0.5.0 (private) behavior.
+
+    PrepareUploadResponse:
+      type: object
+      required: [upload_id, payment_type, total_amount, payment_vault_address, payment_token_address, rpc_url, total_chunks, already_stored_count]
+      properties:
+        upload_id:
+          type: string
+          description: Opaque token to pass back to finalize
+        payment_type:
+          type: string
+          enum: [wave_batch, merkle]
+          description: >-
+            Discriminator for payment flow. "wave_batch" (< 64 chunks) means
+            call payForQuotes() and finalize with tx_hashes. "merkle" (>= 64 chunks)
+            means call payForMerkleTree() and finalize with winner_pool_hash.
+        # -- Wave-batch fields (present when payment_type == "wave_batch") --
+        payments:
+          type: array
+          items:
+            $ref: "#/components/schemas/PaymentEntry"
+          description: Per-quote payment entries for payForQuotes() (wave_batch only)
+        # -- Merkle fields (present when payment_type == "merkle") --
+        depth:
+          type: integer
+          description: Merkle tree depth 1-8 (merkle only)
+        pool_commitments:
+          type: array
+          items:
+            $ref: "#/components/schemas/PoolCommitmentEntry"
+          description: Pool commitments for payForMerkleTree() (merkle only)
+        merkle_payment_timestamp:
+          type: integer
+          format: int64
+          description: Unix timestamp for the merkle payment (merkle only)
+        # -- Common fields --
+        total_amount:
+          type: string
+          description: >-
+            Total amount to pay (atto tokens as decimal string).
+            For merkle this is "0" since cost is determined on-chain.
+        payment_vault_address:
+          type: string
+          description: Payment vault contract address (hex with 0x prefix)
+        payment_token_address:
+          type: string
+          description: Payment token contract address (hex with 0x prefix)
+        rpc_url:
+          type: string
+          description: EVM RPC URL for submitting transactions
+        # -- Already-stored preflight (added in antd 0.10.0) --
+        total_chunks:
+          type: integer
+          description: >-
+            Total number of chunks in this upload, including any already
+            on-network. Added in antd 0.10.0; omitted by older daemons.
+        already_stored_count:
+          type: integer
+          description: >-
+            How many of total_chunks were already stored on-network and
+            excluded from payment + PUT. The external signer pays for
+            (total_chunks - already_stored_count) chunks. Added in antd 0.10.0.
+
+    PoolCommitmentEntry:
+      type: object
+      required: [pool_hash, candidates]
+      properties:
+        pool_hash:
+          type: string
+          description: Pool hash (hex, 32 bytes with 0x prefix)
+        candidates:
+          type: array
+          minItems: 16
+          maxItems: 16
+          items:
+            $ref: "#/components/schemas/CandidateNodeEntry"
+          description: Exactly 16 candidate nodes
+
+    CandidateNodeEntry:
+      type: object
+      required: [rewards_address, amount]
+      properties:
+        rewards_address:
+          type: string
+          description: Node rewards address (hex with 0x prefix, 20 bytes)
+        amount:
+          type: string
+          description: Node price (decimal string)
+
+    PaymentEntry:
+      type: object
+      required: [quote_hash, rewards_address, amount]
+      properties:
+        quote_hash:
+          type: string
+          description: Quote hash (hex, 32 bytes)
+        rewards_address:
+          type: string
+          description: Rewards address (hex with 0x prefix, 20 bytes)
+        amount:
+          type: string
+          description: Amount to pay (atto tokens as decimal string)
+
+    FinalizeUploadRequest:
+      type: object
+      required: [upload_id]
+      description: >-
+        Provide either tx_hashes (wave_batch) or winner_pool_hash (merkle).
+        The server validates based on the stored prepared upload type.
+      properties:
+        upload_id:
+          type: string
+          description: The upload_id returned from a prepare call
+        tx_hashes:
+          type: object
+          additionalProperties:
+            type: string
+          description: >-
+            Wave-batch only: map of quote_hash (hex) to tx_hash (hex) from
+            the payForQuotes() on-chain payment. When prepare reported no
+            payments (every chunk already stored), pass an empty object —
+            the upload finalizes without any on-chain payment.
+        winner_pool_hash:
+          type: string
+          description: >-
+            Merkle only: bytes32 winner pool hash (hex with 0x prefix) from
+            the MerklePaymentMade event emitted by payForMerkleTree()
+        store_data_map:
+          type: boolean
+          default: false
+          description: >-
+            If true, store the DataMap on-network and return its address.
+            If false (default), return the raw DataMap for caller-side storage.
+
+    FinalizeUploadResponse:
+      type: object
+      required: [data_map, chunks_stored]
+      properties:
+        data_map:
+          type: string
+          description: Hex-encoded serialized DataMap (always returned)
+        address:
+          type: string
+          description: >-
+            Network address of the DataMap stored via the legacy
+            store_data_map=true path (paid by the daemon's internal
+            wallet). Prefer visibility:"public" on prepare instead.
+        data_map_address:
+          type: string
+          description: >-
+            Network address of the bundled DataMap chunk when the upload
+            was prepared with visibility:"public". The DataMap chunk's
+            payment is part of the same external-signer batch as the
+            data chunks — no separate daemon-wallet payment.
+        chunks_stored:
+          type: integer
+          description: Number of chunks stored on the network
+
+    # -- Common --
+    CostResponse:
+      type: object
+      required: [cost]
+      properties:
+        cost:
+          type: string
+          description: Cost in atto tokens
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: Error message
+
+  responses:
+    BadRequest:
+      description: Invalid request (400)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    PaymentError:
+      description: Insufficient funds (402)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: Resource not found (404)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Conflict:
+      description: Resource already exists or version conflict (409)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    TooLarge:
+      description: Payload too large (413)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    InternalError:
+      description: Internal server error (500)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    ServiceUnavailable:
+      description: Service unavailable — wallet not configured (503)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NetworkError:
+      description: Network unreachable (502)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
