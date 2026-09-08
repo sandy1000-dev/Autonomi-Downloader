@@ -44,6 +44,7 @@ async function main() {
 
   console.log(`GET ${baseUrl}/datamap/${address}`);
   const dm = await fetchBytes(`${baseUrl}/datamap/${address}`);
+  if (wasm.content_hash(new Uint8Array(dm)) !== address) throw new Error('DataMap address mismatch');
   const root = await resolveRoot(baseUrl, dm);
   const chunks = root.chunks;
   console.log(`  root DataMap: ${chunks.length} chunks, ${root.original_file_size} bytes`);

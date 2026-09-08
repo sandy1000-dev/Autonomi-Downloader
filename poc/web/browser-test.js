@@ -53,6 +53,7 @@ async function resolveRoot(msgpackDm) {
   log(`addr=${addr} expected=${expected}`);
   try {
     const dm = await fetchBytes(`/datamap/${addr}`);
+    if (content_hash(dm) !== addr) throw new Error('DataMap address mismatch');
     const root = await resolveRoot(dm);
     const src = JSON.stringify(root.chunks.map((c) => c.src_hash));
     const parts = [];

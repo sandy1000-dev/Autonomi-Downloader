@@ -98,6 +98,9 @@ async function openFileSink(filename, size) {
 async function downloadAddress(address, suggestedName, precreatedSink) {
   setStatus(`Fetching DataMap at ${address.slice(0, 16)}…`);
   const dm = await fetchBytes(`/datamap/${address}`);
+  if (content_hash(dm) !== address) {
+    throw new Error('DataMap address mismatch — gateway returned data for a different address');
+  }
 
   setStatus('Resolving DataMap…');
   const root = await resolveRoot(dm);
