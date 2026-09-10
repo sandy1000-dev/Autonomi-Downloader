@@ -1,11 +1,12 @@
 # Autonomi Browser Downloader
 
-> **Zero-install, privacy-preserving downloads from the Autonomi decentralized network.**
-> Paste a public address into your browser, and the file decrypts locally — the server never sees your data.
+> **Zero-install, privacy-preserving downloads from the Autonomi decentralized storage network.  The server never sees your decrypted file.
 
 ---
 
 ## What is this?
+
+Experimental browser-based downloader / proof of concept
 
 This is a proof-of-concept web downloader for [Autonomi](https://autonomi.com), a decentralized, permanent data network. Anyone can store files on Autonomi; they receive a public address (a 64-character hex string) that others can use to retrieve the data.
 
