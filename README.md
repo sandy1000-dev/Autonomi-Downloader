@@ -12,7 +12,7 @@ This is a proof-of-concept web downloader for [Autonomi](https://autonomi.com), 
 
 **The problem this project solves:**
 - Existing Autonomi tools require installing a local daemon or CLI.
-- Existing web gateways decrypt files on the server — the operator can read your data.
+- Existing web gateways decrypt files on the server — the operator could read your data.
 
 **This project's approach:**
 - A lightweight gateway fetches **only encrypted chunks** from the Autonomi network.
@@ -181,7 +181,7 @@ File System Access API / Blob → local file
 
 | Browser | File size limit | Notes |
 |---------|----------------|-------|
-| **Chrome / Edge** | Unlimited (disk space) | Uses File System Access API — streams directly to disk. User must type filename in save dialog. |
+| **Chrome / Edge** | Unlimited (disk space) | Uses File System Access API — streams directly to disk. User must type filename and extension in save dialog. |
 | **Firefox / Safari** | ~available RAM | Falls back to Blob accumulation. |
 
 ---
