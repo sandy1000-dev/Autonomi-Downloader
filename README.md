@@ -307,15 +307,3 @@ sudo cloudflared service install <your-token>
 
 ---
 
-## Contributing
-
-This is a personal proof-of-concept. If you'd like to experiment with it, open an issue or PR. The codebase is permissively licensed to match upstream Autonomi crates.
-
-## License
-
-Licensed under either of:
-
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
-- MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
-
-at your option.
