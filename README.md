@@ -307,3 +307,25 @@ sudo cloudflared service install <your-token>
 
 ---
 
+## License & Attribution
+
+### Original work
+
+The code under [`poc/`](poc/) (the browser downloader, live gateway, WASM crypto module, and CLI fixture generator) is original work from this project, licensed under either of:
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
+- MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
+
+at your option.
+
+### Vendored code from Autonomi
+
+This repo also vendors forks of several [Autonomi](https://autonomi.com) crates, unmodified except for minimal patches (see [`RESEARCH.md`](RESEARCH.md) and [`ARCHITECTURE.md`](ARCHITECTURE.md)). Each retains its own license files and copyright in-tree — they are **not** relicensed by this project:
+
+| Directory | Forked from | License |
+|-----------|-------------|---------|
+| [`ant-client/`](ant-client/) | [WithAutonomi/ant-client](https://github.com/WithAutonomi/ant-client) | MIT OR Apache-2.0 ([LICENSE-APACHE](ant-client/LICENSE-APACHE), [LICENSE-MIT](ant-client/LICENSE-MIT)) |
+| [`ant-sdk/`](ant-sdk/) | [WithAutonomi/ant-sdk](https://github.com/WithAutonomi/ant-sdk) | MIT OR Apache-2.0 ([LICENSE-APACHE](ant-sdk/LICENSE-APACHE), [LICENSE-MIT](ant-sdk/LICENSE-MIT)) |
+| [`self_encryption/`](self_encryption/), [`poc/vendor/self_encryption/`](poc/vendor/self_encryption/) | [WithAutonomi/self_encryption](https://github.com/WithAutonomi/self_encryption) (itself derived from [maidsafe/self_encryption](https://github.com/maidsafe/self_encryption)) | MIT OR Apache-2.0 ([LICENSE-APACHE](self_encryption/LICENSE-APACHE), [LICENSE-MIT](self_encryption/LICENSE-MIT)) |
+
+All vendored crates happen to use the same dual MIT/Apache-2.0 scheme as the original work in this repo, so the whole project can be used under either license — but attribution to the upstream Autonomi/WithAutonomi authors must be preserved for the vendored directories per the terms of those licenses.
