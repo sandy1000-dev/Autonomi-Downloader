@@ -23,7 +23,7 @@ This is a proof-of-concept web downloader for [Autonomi](https://autonomi.com), 
 
 ---
 
-## What is Autonomi? (30-second primer)
+## What is Autonomi? 
 
 [Autonomi](https://autonomi.com) is a peer-to-peer storage network where:
 - Files are split into encrypted chunks and distributed across the network.
